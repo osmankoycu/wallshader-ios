@@ -25,8 +25,10 @@ struct WallshaderIOSApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             // No Lifecycle module on iOS — just stop preview rendering when
-            // not active, resume when back (spec C1).
+            // not active, resume when back (spec C1). Activation also kicks
+            // a sync pass (the snapshot transport has no push channel).
             app.previewsPaused = phase != .active
+            if phase == .active { app.startSyncIfEnabled() }
         }
     }
 }

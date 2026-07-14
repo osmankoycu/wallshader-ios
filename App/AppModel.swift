@@ -21,6 +21,10 @@ final class AppModel: ObservableObject {
     }
 
     @Published var selectedID: UUID?
+    @Published private(set) var syncStatus: LibrarySyncEngine.Status = .off
+    private var syncEngine: LibrarySyncEngine?
+    private var syncStatusMirror: AnyCancellable?
+    static let syncEnabledKey = "syncWithICloud"
     @Published var path: [UUID] = []
     @Published var previewsPaused = false
     @Published var showingPaywall = false
@@ -44,6 +48,56 @@ final class AppModel: ObservableObject {
         if !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
             UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
             showingOnboarding = true
+        }
+        startSyncIfEnabled()
+    }
+
+    // MARK: - iCloud sync (Phase D)
+
+    var syncEnabled: Bool {
+        UserDefaults.standard.object(forKey: Self.syncEnabledKey) as? Bool ?? true
+    }
+
+    func startSyncIfEnabled() {
+        guard syncEnabled else {
+            syncStatus = .off
+            return
+        }
+        guard syncEngine == nil else {
+            syncEngine?.scheduleSync()
+            return
+        }
+        let engine = LibrarySyncEngine(library: library, transport: CloudKitTransport())
+        syncEngine = engine
+        syncStatusMirror = engine.$status.sink { [weak self] status in
+            self?.syncStatus = status
+        }
+        engine.start()
+    }
+
+    func setSyncEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.syncEnabledKey)
+        if enabled {
+            startSyncIfEnabled()
+        } else {
+            syncEngine?.stop()
+            syncEngine = nil
+            syncStatusMirror = nil
+            syncStatus = .off
+        }
+    }
+
+    var syncStatusLine: String {
+        switch syncStatus {
+        case .off: return "Off"
+        case .unavailable: return "iCloud unavailable"
+        case .syncing: return "Syncing…"
+        case .idle(let last):
+            if let last {
+                return "Last synced \(last.formatted(date: .omitted, time: .shortened))"
+            }
+            return "Waiting for first sync"
+        case .error(let message): return "Sync problem: \(message)"
         }
     }
 

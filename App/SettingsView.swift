@@ -9,8 +9,24 @@ struct SettingsView: View {
     @ObservedObject private var store = StoreService.shared
     @State private var restoreMessage: String?
 
+    @EnvironmentObject private var app: AppModel
+
     var body: some View {
         Form {
+            Section {
+                Toggle("Sync with iCloud", isOn: Binding(
+                    get: { app.syncEnabled },
+                    set: { app.setSyncEnabled($0) }
+                ))
+                if app.syncEnabled {
+                    LabeledContent("Status", value: app.syncStatusLine)
+                }
+            } header: {
+                Text("iCloud")
+            } footer: {
+                Text("Sync your wallpaper library across your devices through your private iCloud. Nothing leaves your Apple ID.")
+            }
+
             Section {
                 Picker("Frame rate", selection: $frameRateCap) {
                     Text("30 fps").tag(30)
