@@ -13,7 +13,7 @@ struct DetailView: View {
     @Environment(\.undoManager) private var undoManager
 
     @State var currentID: UUID
-    @State private var models: [UUID: EditorModel] = [:]
+    @StateObject private var models = ModelCache()
     @State private var editing = false
     @State private var chromeHidden = false
     @State private var renaming = false
@@ -27,11 +27,7 @@ struct DetailView: View {
     }
 
     private func model(for id: UUID) -> EditorModel {
-        if let existing = models[id] { return existing }
-        let fresh = EditorModel(app: AppModel.shared, documentID: id)
-        fresh.undoManager = undoManager
-        DispatchQueue.main.async { models[id] = fresh }
-        return fresh
+        models.model(for: id, undoManager: undoManager)
     }
 
     private var currentModel: EditorModel { model(for: currentID) }
@@ -42,10 +38,20 @@ struct DetailView: View {
             Color.black.ignoresSafeArea()
 
             // Full-bleed pager over the library (Photos-style swiping).
+            // TabView(.page) is EAGER: only the current page and its
+            // neighbors get a live Metal view — the rest stay black, or a
+            // detail view over a big library would spin up every photo
+            // texture at once.
             TabView(selection: $currentID) {
                 ForEach(library.documents) { doc in
-                    pagePreview(doc)
-                        .tag(doc.id)
+                    Group {
+                        if isNeighbor(doc.id) {
+                            pagePreview(doc)
+                        } else {
+                            Color.black
+                        }
+                    }
+                    .tag(doc.id)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
@@ -99,6 +105,13 @@ struct DetailView: View {
         }
     }
 
+    private func isNeighbor(_ id: UUID) -> Bool {
+        let docs = library.documents
+        guard let current = docs.firstIndex(where: { $0.id == currentID }),
+              let index = docs.firstIndex(where: { $0.id == id }) else { return false }
+        return abs(current - index) <= 1
+    }
+
     @ViewBuilder
     private func pagePreview(_ doc: WallpaperDocument) -> some View {
         let model = model(for: doc.id)
@@ -132,7 +145,9 @@ struct DetailView: View {
 
     private var topBar: some View {
         HStack {
-            pillButton(systemImage: "chevron.left", label: "Back") { dismiss() }
+            if UIDevice.current.userInterfaceIdiom != .pad {
+                pillButton(systemImage: "chevron.left", label: "Back") { dismiss() }
+            }
 
             Spacer()
 
@@ -170,6 +185,7 @@ struct DetailView: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
                     .frame(width: 40, height: 40)
                     .background(Circle().fill(.ultraThinMaterial))
             }
@@ -196,6 +212,10 @@ struct DetailView: View {
         }
         .pickerStyle(.segmented)
         .frame(maxWidth: 300)
+        // Segmented alone disappears over bright wallpapers — back it with
+        // the same material as every other chrome pill.
+        .padding(4)
+        .background(Capsule().fill(.ultraThinMaterial))
     }
 
     // MARK: - Filmstrip (Photos-style neighbor strip)
@@ -210,6 +230,7 @@ struct DetailView: View {
                     }
                 }
                 .padding(.horizontal, 4)
+                .frame(minWidth: UIScreen.main.bounds.width - 32) // centers short strips
             }
             .frame(height: 44)
             .onChange(of: currentID) { _, id in
@@ -295,6 +316,7 @@ struct DetailView: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 17))
+                .foregroundStyle(.white)
                 .frame(width: 44, height: 44)
                 .background(Circle().fill(.ultraThinMaterial))
         }
@@ -331,7 +353,7 @@ struct DetailView: View {
         undoManager?.registerUndo(withTarget: library) { lib in
             lib.restore(doc, imagePNG: imageData)
         }
-        models[doc.id] = nil
+        models.remove(doc.id)
         let remaining = library.documents
         if remaining.isEmpty {
             dismiss()
@@ -344,5 +366,29 @@ struct DetailView: View {
 private extension UIViewController {
     var presentedOrSelf: UIViewController {
         presentedViewController?.presentedOrSelf ?? self
+    }
+}
+
+
+/// One EditorModel per visited document, created exactly once — creating
+/// models during view-body evaluation (and stashing them via async state
+/// writes) duplicated Combine subscriptions per render pass.
+@MainActor
+final class ModelCache: ObservableObject {
+    private var cache: [UUID: EditorModel] = [:]
+
+    func remove(_ id: UUID) {
+        cache[id] = nil
+    }
+
+    func model(for id: UUID, undoManager: UndoManager?) -> EditorModel {
+        if let existing = cache[id] {
+            existing.undoManager = undoManager
+            return existing
+        }
+        let fresh = EditorModel(app: AppModel.shared, documentID: id)
+        fresh.undoManager = undoManager
+        cache[id] = fresh
+        return fresh
     }
 }

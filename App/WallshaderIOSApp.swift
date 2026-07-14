@@ -23,6 +23,7 @@ struct WallshaderIOSApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(app)
+                .preferredColorScheme(.dark)
                 .onOpenURL { url in
                     // .wallshader arrives via AirDrop / Files / share sheet.
                     guard url.pathExtension.lowercased() == "wallshader" else { return }

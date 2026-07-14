@@ -1,5 +1,6 @@
 import Combine
 import CoreGraphics
+import CoreImage
 import Photos
 import ShaderCore
 import SwiftUI
@@ -264,14 +265,66 @@ final class EditorModel: ObservableObject {
         document?.adjustments ?? .neutral
     }
 
-    /// Scrub-time adjustments draft (Photos-style ruler): the full-res
-    /// Core Image pass runs once, on commit — never per tick.
-    @Published var draftAdjustments: WallpaperDocument.ImageAdjustments?
+    /// Scrub-time adjustments draft (Photos-style ruler): the preview
+    /// follows LIVE from a small cached proxy (the Mac's proxy-drag
+    /// pipeline, ported); the full-res Core Image pass runs once, on
+    /// commit. At most one proxy render in flight, latest wins.
+    @Published var draftAdjustments: WallpaperDocument.ImageAdjustments? {
+        didSet {
+            if let draft = draftAdjustments { renderAdjustmentProxy(draft) }
+        }
+    }
+    private var proxyBusy = false
+    private var proxyQueued: WallpaperDocument.ImageAdjustments?
+    private var proxyGen = 0
 
     func commitDraftAdjustments() {
         guard let draft = draftAdjustments else { return }
         draftAdjustments = nil
+        proxyQueued = nil
         setAdjustments(draft)
+    }
+
+    private func renderAdjustmentProxy(_ adjustments: WallpaperDocument.ImageAdjustments) {
+        if proxyBusy {
+            proxyQueued = adjustments
+            return
+        }
+        guard let doc = document, let url = library.sourceImageURL(for: doc) else { return }
+        let cached = library.cachedAdjustmentProxy(for: doc)
+        proxyBusy = true
+        proxyGen += 1
+        let gen = proxyGen
+        Task { @MainActor [weak self] in
+            let result: (cg: CGImage?, built: (image: CIImage, scale: CGFloat)?) =
+                await Task.detached(priority: .userInitiated) {
+                    var built: (image: CIImage, scale: CGFloat)?
+                    let proxy: (image: CIImage, scale: CGFloat)
+                    if let cached {
+                        proxy = cached
+                    } else if let fresh = WallpaperLibrary.buildAdjustmentProxy(at: url) {
+                        proxy = fresh
+                        built = fresh
+                    } else {
+                        return (nil, nil)
+                    }
+                    let cg = WallpaperLibrary.adjustedImage(from: proxy.image,
+                                                            adjustments: adjustments,
+                                                            blurScale: proxy.scale)
+                    return (cg, built)
+                }.value
+            guard let self else { return }
+            if let built = result.built { self.library.storeAdjustmentProxy(built, for: doc) }
+            self.proxyBusy = false
+            if gen == self.proxyGen, let cg = result.cg,
+               let texture = self.library.makeTexture(from: cg) {
+                self.preview.texture = texture
+            }
+            if let queued = self.proxyQueued {
+                self.proxyQueued = nil
+                self.renderAdjustmentProxy(queued)
+            }
+        }
     }
 
     /// Applies an upstream preset (Mac rule: presets never re-frame the
