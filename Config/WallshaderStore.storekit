@@ -1,0 +1,33 @@
+{
+  "identifier" : "WallshaderStore",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "8.99",
+      "familyShareable" : false,
+      "internalID" : "WSPRO0001",
+      "localizations" : [
+        {
+          "description" : "Unlimited wallpapers, forever.",
+          "displayName" : "Wallshader Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.innovationBox.wallshader.pro",
+      "referenceName" : "Pro",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}
