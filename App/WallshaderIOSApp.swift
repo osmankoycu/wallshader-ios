@@ -8,6 +8,13 @@ struct WallshaderIOSApp: App {
     @StateObject private var app = AppModel.shared
 
     init() {
+        // Only Release carries the iCloud entitlement (project.yml). A
+        // Debug build on a signed-in device must never reach CKContainer —
+        // that raises an uncatchable NSException (the Task EXC_BREAKPOINT
+        // crash on first device install).
+        #if !DEBUG
+        CloudKitTransport.hostDeclaresEntitlement = true
+        #endif
         UnsplashClient.shared.accessKey = UnsplashClient.bundledAccessKey(in: .main)
         ScreensDriver.prepareIfRequested()
     }
