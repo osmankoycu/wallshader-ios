@@ -63,26 +63,37 @@ struct LibraryView: View {
         }
     }
 
+    /// Photos-library grid: edge-to-edge, hairline gutters, floating
+    /// chrome over a scrim — no cards, the wallpapers ARE the surface.
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 160, maximum: 240), spacing: 14)]
+        [GridItem(.adaptive(minimum: 118, maximum: 190), spacing: 2)]
     }
 
     private var grid: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 14) {
+            LazyVGrid(columns: columns, spacing: 2) {
                 ForEach(library.documents) { doc in
                     Button {
                         app.open(doc.id)
                     } label: {
-                        card(doc)
+                        thumbnailImage(doc)
+                            .frame(maxWidth: .infinity)
+                            .aspectRatio(AppModel.currentDevice.canonicalAspect,
+                                         contentMode: .fit)
+                            .clipped()
+                            .contentShape(Rectangle())
+                            .accessibilityLabel(Text(doc.name))
                     }
                     .buttonStyle(.plain)
                     .contextMenu { contextMenu(doc) }
                 }
                 .onMove(perform: move)
             }
-            .padding(16)
+            .padding(.top, 2)
         }
+        .ignoresSafeArea(edges: .bottom)
+        .background(Color(white: 0.06))
+        .preferredColorScheme(.dark)
     }
 
     private var sidebarList: some View {
@@ -101,21 +112,6 @@ struct LibraryView: View {
             .onMove(perform: move)
         }
         .navigationTitle("Library")
-    }
-
-    private func card(_ doc: WallpaperDocument) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            thumbnailImage(doc)
-                .frame(maxWidth: .infinity)
-                .aspectRatio(AppModel.currentDevice.canonicalAspect, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(.quaternary, lineWidth: 0.5))
-            Text(doc.name)
-                .font(.callout)
-                .lineLimit(1)
-        }
-        .accessibilityLabel(Text(doc.name))
     }
 
     @ViewBuilder

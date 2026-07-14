@@ -15,13 +15,16 @@ final class SmokeTests: XCTestCase {
         app.launchArguments = ["--suppress-onboarding"]
         app.launch()
 
-        // Seeded starters exist on first launch (grid on iPhone, sidebar
-        // list on iPad).
-        let firstCard = app.staticTexts["Mesh Gradient"].firstMatch
-        XCTAssertTrue(firstCard.waitForExistence(timeout: 15), "seeded library visible")
-        firstCard.tap()
-        // Editor: the variant selector is up (current device preselected).
+        // Seeded starters exist on first launch. The Photos-style grid has
+        // no text labels — the tile itself carries the accessibility label;
+        // the iPad sidebar still shows it as a row.
+        let tile = app.buttons["Mesh Gradient"].firstMatch
+        let row = app.staticTexts["Mesh Gradient"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 15) || row.exists,
+                      "seeded library visible")
+        (tile.exists ? tile : row).tap()
+        // Detail: the variant selector is up (current device preselected).
         XCTAssertTrue(app.buttons["iPhone"].waitForExistence(timeout: 15),
-                      "editor opened with the variant selector")
+                      "detail opened with the variant selector")
     }
 }

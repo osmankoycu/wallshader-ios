@@ -264,6 +264,43 @@ final class EditorModel: ObservableObject {
         document?.adjustments ?? .neutral
     }
 
+    /// Scrub-time adjustments draft (Photos-style ruler): the full-res
+    /// Core Image pass runs once, on commit — never per tick.
+    @Published var draftAdjustments: WallpaperDocument.ImageAdjustments?
+
+    func commitDraftAdjustments() {
+        guard let draft = draftAdjustments else { return }
+        draftAdjustments = nil
+        setAdjustments(draft)
+    }
+
+    /// Applies an upstream preset (Mac rule: presets never re-frame the
+    /// photo — sizing params are skipped for image documents).
+    func apply(preset: ShaderSchema.Preset) {
+        guard let schema else { return }
+        var params = preview.params
+        let keepSizing = document?.kind == .imageBased
+        for (name, value) in preset.params {
+            guard let param = schema.params.first(where: { $0.name == name }) else { continue }
+            if keepSizing, param.group == "sizing" { continue }
+            switch param.type {
+            case .float, .motion:
+                if let v = value.doubleValue { params[name] = .number(v) }
+            case .bool:
+                if let v = value.boolValue { params[name] = .bool(v) }
+            case .color:
+                if let v = value.stringValue { params[name] = .color(v) }
+            case .enumeration:
+                if let v = value.stringValue { params[name] = .choice(v) }
+            case .colorArray:
+                if let v = value.stringArrayValue { params[name] = .colorArray(v) }
+            case .image:
+                break
+            }
+        }
+        preview.params = params
+    }
+
     /// iOS applies adjustments per commit (slider release), full-res on a
     /// background task — no proxy pipeline (logged decision).
     func setAdjustments(_ new: WallpaperDocument.ImageAdjustments) {

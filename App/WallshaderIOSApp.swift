@@ -51,7 +51,8 @@ struct RootView: View {
                 LibraryView(style: .sidebar)
             } detail: {
                 if let id = app.selectedID, app.library.document(id: id) != nil {
-                    EditorView(documentID: id)
+                    DetailView(documentID: id)
+                        .id(id)
                 } else {
                     ContentUnavailableView("No Wallpaper Selected",
                                            systemImage: "photo.on.rectangle.angled",
@@ -63,7 +64,7 @@ struct RootView: View {
             NavigationStack(path: $app.path) {
                 LibraryView(style: .grid)
                     .navigationDestination(for: UUID.self) { id in
-                        EditorView(documentID: id)
+                        DetailView(documentID: id)
                     }
             }
             .fullScreenCover(isPresented: $app.showingOnboarding) { OnboardingView() }

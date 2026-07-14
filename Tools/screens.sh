@@ -13,14 +13,18 @@ shot() {
   local name="$1"; shift
   xcrun simctl terminate "$SIM_ID" "$BUNDLE" 2>/dev/null || true
   xcrun simctl launch "$SIM_ID" "$BUNDLE" --suppress-onboarding "$@" >/dev/null
-  sleep 5
+  sleep 9
   xcrun simctl io "$SIM_ID" screenshot "$OUT/$name.png" >/dev/null
   echo "screens: $OUT/$name.png"
 }
 
 shot library
-shot editor --screen editor
-shot editor-photo --screen editor-photo
+shot detail --screen editor
+shot detail-photo --screen editor-photo
+shot edit-shader --screen editor --auto-edit --edit-tab shader
+shot edit-adjust --screen editor --auto-edit --edit-tab adjust
+shot edit-frame --screen editor-photo --auto-edit --edit-tab frame
+shot edit-colors --screen editor-photo --auto-edit --edit-tab colors
 shot paywall --screen paywall
 xcrun simctl terminate "$SIM_ID" "$BUNDLE" 2>/dev/null || true
 xcrun simctl launch "$SIM_ID" "$BUNDLE" --reset-onboarding >/dev/null
