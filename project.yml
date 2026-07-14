@@ -110,6 +110,36 @@ targets:
               - com.innovationBox.wallshader.wallpaper
         LSSupportsOpeningDocumentsInPlace: false
 
+  # Hermetic logic tests (no app host) over the shared packages + app-level
+  # tables, mirroring the Mac repo's test-target philosophy.
+  WallshaderIOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/WallshaderIOSTests
+    dependencies:
+      - package: ShaderCore
+      - package: WallshaderModel
+      - package: WallshaderStoreCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.innovationBox.wallshader.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+  # Minimal XCUITest smoke (C10): launch, library visible, editor opens.
+  WallshaderIOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/WallshaderIOSUITests
+    dependencies:
+      - target: WallshaderIOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.innovationBox.wallshader.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: WallshaderIOS
+
 schemes:
   WallshaderIOS:
     build:
@@ -119,3 +149,8 @@ schemes:
       config: Debug
       # Same local StoreKit testing mechanism as the Mac repo.
       storeKitConfiguration: Config/WallshaderStore.storekit
+    test:
+      config: Debug
+      targets:
+        - WallshaderIOSTests
+        - WallshaderIOSUITests
