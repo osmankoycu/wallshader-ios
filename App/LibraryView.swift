@@ -184,58 +184,86 @@ struct LibraryView: View {
 final class DeviceThumbnailStore: ObservableObject {
     static let shared = DeviceThumbnailStore()
 
-    private var cache: [String: CGImage] = [:]
-    private var inFlight: Set<String> = []
+    /// One entry per document — the stamp keyed the whole cache once, so
+    /// every save (new modifiedAt) grew it by another ~1 MB CGImage that
+    /// was never evicted.
+    private var cache: [UUID: (stamp: String, image: CGImage)] = [:]
+    private var inFlight: Set<UUID> = []
 
-    private func key(_ doc: WallpaperDocument) -> String {
+    private func stamp(_ doc: WallpaperDocument) -> String {
         // Stable stamp: JSONEncoder's dictionary order is nondeterministic,
         // so hashing an encode would miss the cache on every call.
         let device = AppModel.currentDevice
-        return "\(doc.id)-\(device.rawValue)-\(doc.shaderId ?? "")-\(doc.modifiedAt.timeIntervalSince1970)-\(doc.isCustomized(device))-\(doc.sourceImageCacheKey ?? "")"
+        return "\(device.rawValue)-\(doc.shaderId ?? "")-\(doc.modifiedAt.timeIntervalSince1970)-\(doc.isCustomized(device))-\(doc.sourceImageCacheKey ?? "")"
     }
 
+    /// Returns the cached render — or, while a fresh one is in flight, the
+    /// previous (stale) image so edits don't flash a gray placeholder. The
+    /// photo decode + adjustment pass + texture upload all run DETACHED;
+    /// doing them synchronously here stalled the main thread on every
+    /// cache miss (once per save, mid-drag included).
     func thumbnail(for doc: WallpaperDocument, app: AppModel) -> CGImage? {
-        let key = key(doc)
-        if let hit = cache[key] { return hit }
-        guard !inFlight.contains(key), let renderer = app.renderer,
-              doc.shaderId != nil, doc.isAppliable else { return nil }
-        inFlight.insert(key)
+        let stamp = stamp(doc)
+        let hit = cache[doc.id]
+        if let hit, hit.stamp == stamp { return hit.image }
+        guard !inFlight.contains(doc.id), let renderer = app.renderer,
+              doc.shaderId != nil, doc.isAppliable else { return hit?.image }
+        inFlight.insert(doc.id)
         let library = app.library
         let device = AppModel.currentDevice
-        let texture = doc.needsSourceImage ? library.loadSourceTexture(for: doc) : nil
-        let aspect: Double? = texture.map { Double($0.width) / Double(max(1, $0.height)) }
-        guard let params = doc.shaderParams(for: device, imageAspect: aspect) else { return nil }
-        let variant = doc.resolvedVariant(for: device, imageAspect: aspect)
-        let ambient = library.ambientSpec(for: doc, settings: variant.ambient)
+        let sourceURL = doc.needsSourceImage ? library.sourceImageURL(for: doc) : nil
+        // The image aspect only shapes auto-variant sizing params, not the
+        // ambient settings — safe to resolve those before the decode.
+        let ambient = library.ambientSpec(
+            for: doc, settings: doc.resolvedVariant(for: device, imageAspect: nil).ambient)
         let px = device.canonicalPixels
         let width = 360
         let height = max(64, Int((Double(width) * px.height / px.width).rounded()))
-        let offscreen = OffscreenRendererBox(renderer: renderer)
+        let box = RendererBox(renderer: renderer)
         Task.detached(priority: .utility) { [weak self] in
-            let image = try? offscreen.value.renderImage(
-                shaderId: doc.shaderId!, params: params,
-                pixelWidth: width, pixelHeight: height,
-                pixelRatio: device == .ipad ? 2 : 3,
-                timeSeconds: Float(params.frame * 0.001),
-                texture: texture, ambient: ambient,
-                emulatedTarget: (SIMD2(Float(px.width), Float(px.height)),
-                                 device == .ipad ? 2 : 3))
+            var texture: MTLTexture?
+            if let sourceURL {
+                if let adjustments = doc.adjustments, !adjustments.isNeutral,
+                   let adjusted = WallpaperLibrary.adjustedImage(at: sourceURL,
+                                                                adjustments: adjustments) {
+                    texture = try? box.renderer.loadTexture(cgImage: adjusted)
+                } else {
+                    texture = try? box.renderer.loadTexture(url: sourceURL)
+                }
+            }
+            let aspect = texture.map { Double($0.width) / Double(max(1, $0.height)) }
+            var image: CGImage?
+            if let params = doc.shaderParams(for: device, imageAspect: aspect) {
+                image = try? box.offscreen.renderImage(
+                    shaderId: doc.shaderId!, params: params,
+                    pixelWidth: width, pixelHeight: height,
+                    pixelRatio: device == .ipad ? 2 : 3,
+                    timeSeconds: Float(params.frame * 0.001),
+                    texture: texture, ambient: ambient,
+                    emulatedTarget: (SIMD2(Float(px.width), Float(px.height)),
+                                     device == .ipad ? 2 : 3))
+            }
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                self.inFlight.remove(key)
+                self.inFlight.remove(doc.id)
                 if let image {
-                    self.cache[key] = image
+                    self.cache[doc.id] = (stamp, image)
                     self.objectWillChange.send()
                 }
             }
         }
-        return nil
+        return hit?.image
     }
 }
 
 import ShaderCore
-/// Sendable box so the detached render task can carry the offscreen renderer.
-private struct OffscreenRendererBox: @unchecked Sendable {
-    let value: OffscreenRenderer
-    init(renderer: ShaderRenderer) { value = OffscreenRenderer(renderer: renderer) }
+/// Sendable box so the detached render task can decode the photo, upload
+/// the texture, and run the offscreen render off the main thread.
+private struct RendererBox: @unchecked Sendable {
+    let renderer: ShaderRenderer
+    let offscreen: OffscreenRenderer
+    init(renderer: ShaderRenderer) {
+        self.renderer = renderer
+        offscreen = OffscreenRenderer(renderer: renderer)
+    }
 }
