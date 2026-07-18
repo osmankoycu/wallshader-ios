@@ -93,9 +93,6 @@ struct DetailView: View {
                             titleVisibility: .visible) {
             Button("Delete Wallpaper", role: .destructive) { deleteCurrent() }
         }
-        .onChange(of: currentID) { _, _ in
-            currentModel.preview.paused = app.previewsPaused
-        }
         .task {
             // Screenshot automation (make screens): jump straight into edit.
             if CommandLine.arguments.contains("--auto-edit") {
@@ -120,10 +117,18 @@ struct DetailView: View {
         } else if doc.needsSourceImage && doc.sourceImage == nil {
             PhotoDropZoneView(model: model)
         } else {
-            PreviewMetalView(model: model.preview)
+            PreviewMetalView(model: model.preview, mode: pageMode(doc))
                 .aspectRatio(model.selectedDevice.canonicalAspect, contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    /// Only the current page animates; neighbors render a still on demand
+    /// (Photos-style). While the editor covers this screen — or the scene
+    /// goes inactive — pages render nothing and keep their last frame.
+    private func pageMode(_ doc: WallpaperDocument) -> PreviewMetalView.Mode {
+        if editing || app.previewsPaused { return .frozen }
+        return doc.id == currentID ? .live : .still
     }
 
     // MARK: - Floating chrome (Photos-style pills)

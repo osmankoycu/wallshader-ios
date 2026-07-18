@@ -10,6 +10,7 @@ import WallshaderModel
 /// sub-control row, and the main-category tab pill.
 struct EditView: View {
     @ObservedObject var model: EditorModel
+    @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.undoManager) private var undoManager
 
@@ -51,7 +52,8 @@ struct EditView: View {
 
                 GeometryReader { geo in
                     ZStack {
-                        PreviewMetalView(model: model.preview)
+                        PreviewMetalView(model: model.preview,
+                                         mode: app.previewsPaused ? .frozen : .live)
                             .aspectRatio(model.selectedDevice.canonicalAspect,
                                          contentMode: .fit)
                             .frame(width: geo.size.width, height: geo.size.height)

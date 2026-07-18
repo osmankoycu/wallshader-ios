@@ -6,19 +6,33 @@ import WallshaderModel
 /// The iOS editor preview: a CADisplayLink-driven CAMetalLayer over the
 /// shared ShaderCore render core (the iOS counterpart of the Mac's
 /// PreviewView, which drives itself from NSScreen.displayLink per the
-/// MTKView gotcha). Respects the frame-rate cap and drops to 30 fps in
-/// Low Power Mode (spec C2).
+/// MTKView gotcha). Respects the frame-rate cap, drops to 30 fps in Low
+/// Power Mode (spec C2) and under serious thermal pressure.
 struct PreviewMetalView: UIViewRepresentable {
+    /// How much rendering this instance is allowed to do. `.live` animates;
+    /// `.still` renders only on demand (first frame, param changes) so
+    /// off-current pager pages don't burn GPU; `.frozen` renders nothing
+    /// and keeps the last presented frame (pages covered by the editor,
+    /// scene-phase pause).
+    enum Mode {
+        case live
+        case still
+        case frozen
+    }
+
     @ObservedObject var model: PreviewModel
+    var mode: Mode = .live
 
     func makeUIView(context: Context) -> MetalHostView {
         let view = MetalHostView()
         view.model = model
+        view.mode = mode
         return view
     }
 
     func updateUIView(_ view: MetalHostView, context: Context) {
         view.model = model
+        view.mode = mode
         view.setNeedsRender()
     }
 
@@ -29,9 +43,25 @@ struct PreviewMetalView: UIViewRepresentable {
         var model: PreviewModel? {
             didSet { configureIfNeeded() }
         }
+        var mode: PreviewMetalView.Mode = .live {
+            didSet {
+                if oldValue == .frozen, mode != .frozen { needsRender = true }
+            }
+        }
         private var link: CADisplayLink?
         private var configured = false
         private var frameInFlight = false
+
+        /// CADisplayLink RETAINS its target — pointing it straight at the
+        /// view made deinit unreachable, so every dismissed editor / swiped
+        /// pager page left a zombie 60 fps render loop behind (the device-
+        /// heating bug). The weak proxy breaks the cycle; the link itself
+        /// lives only while the view is in a window.
+        private final class LinkProxy: NSObject {
+            weak var view: MetalHostView?
+            init(view: MetalHostView) { self.view = view }
+            @objc func tick(_ link: CADisplayLink) { view?.tick(link) }
+        }
 
         private func configureIfNeeded() {
             guard !configured, let model, let renderer = model.renderer else { return }
@@ -41,16 +71,57 @@ struct PreviewMetalView: UIViewRepresentable {
             metalLayer.framebufferOnly = true
             metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
 
-            let link = CADisplayLink(target: self, selector: #selector(tick))
+            for name: Notification.Name in [UserDefaults.didChangeNotification,
+                                            .NSProcessInfoPowerStateDidChange,
+                                            ProcessInfo.thermalStateDidChangeNotification] {
+                NotificationCenter.default.addObserver(self, selector: #selector(environmentChanged),
+                                                       name: name, object: nil)
+            }
+            // Still previews park on needsRender — an async halo compute
+            // finishing must wake them or the fresh backdrop pops in only
+            // on the next unrelated repaint (the Mac learned this too).
+            NotificationCenter.default.addObserver(self, selector: #selector(backdropReady),
+                                                   name: AmbientBackdropStore.backdropDidBecomeReady,
+                                                   object: nil)
+            if window != nil { startLink() }
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window == nil {
+                link?.invalidate()
+                link = nil
+            } else if configured {
+                startLink()
+                needsRender = true
+            }
+        }
+
+        private func startLink() {
+            guard link == nil else { return }
+            let link = CADisplayLink(target: LinkProxy(view: self), selector: #selector(LinkProxy.tick(_:)))
             link.add(to: .main, forMode: .common)
             self.link = link
             applyFrameRate()
         }
 
+        @objc private func environmentChanged() {
+            DispatchQueue.main.async { [weak self] in self?.applyFrameRate() }
+        }
+
+        @objc private func backdropReady() {
+            DispatchQueue.main.async { [weak self] in self?.setNeedsRender() }
+        }
+
         private func applyFrameRate() {
             let cap = Float(UserDefaults.standard.integer(forKey: "liveFrameRateCap"))
             let base: Float = cap > 0 ? cap : 60
-            let effective = ProcessInfo.processInfo.isLowPowerModeEnabled ? min(base, 30) : base
+            var effective = ProcessInfo.processInfo.isLowPowerModeEnabled ? min(base, 30) : base
+            switch ProcessInfo.processInfo.thermalState {
+            case .serious: effective = min(effective, 30)
+            case .critical: effective = min(effective, 15)
+            default: break
+            }
             link?.preferredFrameRateRange = CAFrameRateRange(minimum: 15, maximum: effective,
                                                              preferred: effective)
         }
@@ -70,11 +141,10 @@ struct PreviewMetalView: UIViewRepresentable {
         private var needsRender = true
 
         @objc private func tick(_ link: CADisplayLink) {
-            guard let model, !frameInFlight else { return }
-            guard !model.paused else { return }
-            if !model.isPlaying && !needsRender { return }
+            guard let model, !frameInFlight, mode != .frozen else { return }
+            let animating = model.isPlaying && mode == .live
+            if !animating && !needsRender { return }
             needsRender = false
-            applyFrameRate()
             render(model: model)
         }
 
@@ -139,7 +209,6 @@ final class PreviewModel: ObservableObject {
     @Published var isPlaying = false
     @Published var texture: MTLTexture?
     var ambient: AmbientRenderSpec?
-    var paused = false
     /// The selected variant's canonical device pixels (miniature target).
     var emulatedPixels: (pixels: SIMD2<Float>, pixelRatio: Float)
 
