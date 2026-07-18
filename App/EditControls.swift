@@ -181,6 +181,9 @@ enum EditControls {
         ]
     }
 
+    /// Ambient sliders scrub a DRAFT (preview-only, halo recompute
+    /// coalesced downstream); the save + undo land once, on release —
+    /// the same shape as the photo-adjustment sliders.
     private static func ambientControls(model: EditorModel) -> [EditControl] {
         func slider(_ id: String, _ title: String, _ icon: String,
                     _ keyPath: WritableKeyPath<AmbientSettings, Double>) -> EditControl {
@@ -188,13 +191,13 @@ enum EditControls {
                 id: id, title: title, systemImage: icon,
                 kind: .slider(range: 0...1, step: 0.01,
                               defaultValue: AmbientSettings.automatic[keyPath: keyPath],
-                              get: { model.currentAmbient[keyPath: keyPath] },
+                              get: { (model.draftAmbient ?? model.currentAmbient)[keyPath: keyPath] },
                               set: { value in
-                                  var next = model.currentAmbient
+                                  var next = model.draftAmbient ?? model.currentAmbient
                                   next[keyPath: keyPath] = value
-                                  model.setAmbient(next)
+                                  model.draftAmbient = next
                               },
-                              commit: {}),
+                              commit: { model.commitDraftAmbient() }),
                 isModified: {
                     abs(model.currentAmbient[keyPath: keyPath]
                         - AmbientSettings.automatic[keyPath: keyPath]) > 0.0001

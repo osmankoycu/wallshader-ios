@@ -83,6 +83,10 @@ final class EditorModel: ObservableObject {
         suppressWriteback = true
         defer { suppressWriteback = false }
         undoBurstActive = false
+        // The model outlives editor sessions (ModelCache) — a scrub draft
+        // must never leak into the next load's preview.
+        draftAdjustments = nil
+        draftAmbient = nil
         document = library.document(id: documentID)
         guard let doc = document, let shaderId = doc.shaderId else {
             undoBaseline = nil
@@ -395,6 +399,24 @@ final class EditorModel: ObservableObject {
 
     var currentAmbient: AmbientSettings {
         editingVariant?.ambient ?? .automatic
+    }
+
+    /// Scrub-time ambient draft: dragging an ambient slider only retargets
+    /// the live preview spec (halo recompute is coalesced in the shared
+    /// store); the library write + undo registration happen once, on
+    /// release. Writing through setAmbient per drag tick meant a disk
+    /// save + undo entry + documents publish at scrub rate.
+    @Published var draftAmbient: AmbientSettings? {
+        didSet {
+            guard let draft = draftAmbient, let doc = document else { return }
+            preview.ambient = library.ambientSpec(for: doc, settings: draft)
+        }
+    }
+
+    func commitDraftAmbient() {
+        guard let draft = draftAmbient else { return }
+        draftAmbient = nil
+        setAmbient(draft)
     }
 
     func setAmbient(_ new: AmbientSettings) {
