@@ -16,6 +16,10 @@ struct RulerSlider: View {
     @State private var dragStartValue: Double?
     @State private var lastDetent: Int?
 
+    /// One shared generator — allocating a fresh one per detent crossing
+    /// costs a Taptic Engine prepare on the main thread at scrub rate.
+    private static let detentHaptic = UISelectionFeedbackGenerator()
+
     private var span: Double { range.upperBound - range.lowerBound }
 
     /// ~64 minor ticks across the range, majors every 8th.
@@ -133,7 +137,7 @@ struct RulerSlider: View {
             let detent = Int(((next - range.lowerBound) / (minorStep * 8)).rounded())
             if detent != lastDetent {
                 lastDetent = detent
-                UISelectionFeedbackGenerator().selectionChanged()
+                Self.detentHaptic.selectionChanged()
             }
         }
     }
