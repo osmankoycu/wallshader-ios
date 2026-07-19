@@ -21,6 +21,11 @@ import WallshaderModel
 enum LivePhotoExporter {
     static let videoSeconds = 1.0
     static let fps = 60
+    /// The wake animation shows a fixed ~0.5 s slice at the still frame and
+    /// SLOWS it (hardware-tested: 1 s and 2 s videos both play the same
+    /// short window) — so the export feeds deliberately overdriven motion
+    /// and lets iOS supply the slow-down.
+    static let speedBoost: Float = 3
     /// The reference's video (and still) height cap; width follows the
     /// screen's aspect, rounded to even.
     static let maxHeight: CGFloat = 1920
@@ -63,12 +68,19 @@ enum LivePhotoExporter {
         let videoURL = dir.appendingPathComponent("video.mov")
 
         // The video runs straight through; the still is its 0.5 s frame
-        // (matching the reference's still-image-time).
+        // (matching the reference's still-image-time). Time advances
+        // LINEARLY at speedBoost × the shader's max speed: the visible
+        // wake slice is short and system-slowed, so it must be packed with
+        // motion end to end (an ease-out that settles into the still puts
+        // the weakest motion exactly where iOS looks — tested and felt).
         let offscreen = OffscreenRenderer(renderer: renderer)
         let frameCount = Int(videoSeconds * Double(fps))
         let stillFrameIndex = frameCount / 2
+        let maxSpeed = Float(ShaderRegistry.shared.schema(for: shaderId)?
+            .params.first { $0.name == "speed" }?.max ?? 1)
+        let rate = max(1, maxSpeed) * speedBoost
         let renderFrame: @Sendable (Int) throws -> CGImage = { index in
-            let t = baseTime + Float(index) / Float(fps)
+            let t = baseTime + Float(index) / Float(fps) * rate
             return try offscreen.renderImage(
                 shaderId: shaderId, params: params,
                 pixelWidth: Int(pixels.width), pixelHeight: Int(pixels.height),
@@ -81,6 +93,7 @@ enum LivePhotoExporter {
             try Self.writeStill(still, to: stillURL, identifier: identifier)
             try await Self.writeVideo(frames: frameCount, size: pixels,
                                       to: videoURL, identifier: identifier,
+                                      stillFrameIndex: stillFrameIndex,
                                       renderFrame: renderFrame)
         }.value
 
@@ -149,7 +162,7 @@ enum LivePhotoExporter {
     }
 
     private static func writeVideo(frames: Int, size: CGSize, to url: URL,
-                                   identifier: String,
+                                   identifier: String, stillFrameIndex: Int,
                                    renderFrame: @escaping @Sendable (Int) throws -> CGImage) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
 
@@ -242,9 +255,12 @@ enum LivePhotoExporter {
             keySpace: .quickTimeMetadata)
         transformItem.dataType = kCMMetadataBaseDataType_PerspectiveTransformF64 as String
         transformItem.value = [1, 0, 0, 0, 1, 0, 0, 0, 1] as NSArray
+        // Marks the exported still's frame (timescale 600, like the
+        // reference's 0.5 s = 300/600).
+        let stillTicks = CMTimeValue(stillFrameIndex) * 600 / CMTimeValue(fps)
         stillAdaptor.append(AVTimedMetadataGroup(
             items: [stillTimeItem, transformItem],
-            timeRange: CMTimeRange(start: CMTime(value: 300, timescale: 600),
+            timeRange: CMTimeRange(start: CMTime(value: stillTicks, timescale: 600),
                                    duration: CMTime(value: 1, timescale: 600))))
         stillInput.markAsFinished()
 
