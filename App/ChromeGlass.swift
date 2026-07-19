@@ -19,14 +19,32 @@ extension View {
     }
 
     @ViewBuilder
-    func chromeGlass(in shape: some Shape) -> some View {
+    func softBottomEdge() -> some View {
+        if #available(iOS 26.0, *) {
+            scrollEdgeEffectStyle(.soft, for: .bottom)
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder
+    func chromeGlass(in shape: some Shape, tint: Color? = nil) -> some View {
         if #available(iOS 26.0, *) {
             // .regular for now. .clear was tried for the Photos-like
             // transparency and felt WORSE on hardware (2026-07-18) — the
             // regular scrim question stays open for a later pass.
-            glassEffect(.regular.interactive(), in: shape)
+            if let tint {
+                glassEffect(.regular.tint(tint).interactive(), in: shape)
+            } else {
+                glassEffect(.regular.interactive(), in: shape)
+            }
         } else {
-            background(shape.fill(.ultraThinMaterial))
+            background {
+                ZStack {
+                    shape.fill(.ultraThinMaterial)
+                    if let tint { shape.fill(tint.opacity(0.35)) }
+                }
+            }
         }
     }
 }

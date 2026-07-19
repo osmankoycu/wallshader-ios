@@ -22,6 +22,32 @@ struct LibraryView: View {
     @State private var showingShare = false
     @State private var preparingShare = false
 
+    /// The select bar's staged entrance: in after the + finished popping
+    /// down, out fast. ONE transition on the container — per-child delayed
+    /// transitions accumulated layout state when toggled rapidly (the bar
+    /// drifted sideways), so the children carry none.
+    private static let stagedBar = AnyTransition.asymmetric(
+        insertion: AnyTransition.opacity.combined(with: .scale(scale: 0.94))
+            .animation(.spring(response: 0.32, dampingFraction: 0.72).delay(0.18)),
+        removal: AnyTransition.opacity.animation(.easeIn(duration: 0.12)))
+
+    /// Value-driven staged swap for the chrome that trades places with the
+    /// select bar (+, Settings): the views never leave the hierarchy, so
+    /// interrupted toggles can't corrupt layout — out fast, back in with a
+    /// delayed spring.
+    private struct ChromeSwap: ViewModifier {
+        let hidden: Bool
+        func body(content: Content) -> some View {
+            content
+                .scaleEffect(hidden ? 0.5 : 1)
+                .opacity(hidden ? 0 : 1)
+                .allowsHitTesting(!hidden)
+                .animation(hidden ? .easeIn(duration: 0.14)
+                                  : .spring(response: 0.32, dampingFraction: 0.72).delay(0.18),
+                           value: hidden)
+        }
+    }
+
     var body: some View {
         Group {
             if style == .sidebar {
@@ -94,32 +120,32 @@ struct LibraryView: View {
             .padding(.top, 2)
         }
         .softTopEdge()
+        .softBottomEdge()
         .ignoresSafeArea(edges: .bottom)
         .background(Color(white: 0.06))
         .preferredColorScheme(.dark)
         .toolbar(.hidden, for: .navigationBar)
         .libraryHeaderBar(header)
         .overlay(alignment: .bottomTrailing) {
-            if !selecting {
-                // Photos' big corner button (its search): our New
-                // Wallpaper, hugging the tab-bar zone at the very bottom.
-                Button {
-                    newWallpaper()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 52, height: 52)
-                        .chromeGlass(in: Circle())
-                }
-                .accessibilityLabel("New Wallpaper")
-                .padding(.trailing, 20)
-                .padding(.bottom, 2)
+            // Photos' big corner button (its search): our New Wallpaper,
+            // hugging the tab-bar zone. Value-driven pop (down fast on
+            // entering select mode, back with a delayed spring after the
+            // bar left).
+            Button {
+                newWallpaper()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 60, height: 60)
+                    .chromeGlass(in: Circle(), tint: .accentColor)
             }
+            .accessibilityLabel("New Wallpaper")
+            .modifier(ChromeSwap(hidden: selecting))
+            .padding(.trailing, 20)
+            .padding(.bottom, 2)
         }
-        .overlay(alignment: .bottom) {
-            if selecting { selectBar }
-        }
+        .libraryBottomBar(visible: selecting, selectBar.transition(Self.stagedBar))
         .overlay {
             if preparingShare {
                 ZStack {
@@ -150,20 +176,21 @@ struct LibraryView: View {
                 SettingsView()
             } label: {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
                     .chromeGlass(in: Circle())
             }
             .accessibilityLabel("Settings")
+            .modifier(ChromeSwap(hidden: selecting))
             Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                     selecting.toggle()
                     selected.removeAll()
                 }
             } label: {
                 Image(systemName: selecting ? "xmark" : "checkmark.circle")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
                     .chromeGlass(in: Circle())
@@ -221,10 +248,12 @@ struct LibraryView: View {
                 .accessibilityLabel(Text(doc.name))
         }
         .buttonStyle(.plain)
-        if selecting {
-            tile
-        } else {
-            tile.contextMenu { contextMenu(doc) }
+        // ONE stable identity: branching tile vs tile.contextMenu swapped
+        // the view identity on select-mode toggles, so every thumbnail got
+        // removed+reinserted — the "all images flick" report. An empty
+        // menu builder is a no-op, so the modifier can stay attached.
+        tile.contextMenu {
+            if !selecting { contextMenu(doc) }
         }
     }
 
@@ -519,6 +548,17 @@ private extension View {
             safeAreaBar(edge: .top, spacing: 0) { header }
         } else {
             safeAreaInset(edge: .top, spacing: 0) { header }
+        }
+    }
+
+    /// Bottom counterpart for the select bar: safeAreaBar so OS 26 draws
+    /// its progressive blur behind the bar (same treatment as the header).
+    @ViewBuilder
+    func libraryBottomBar<Bar: View>(visible: Bool, _ bar: Bar) -> some View {
+        if #available(iOS 26.0, *) {
+            safeAreaBar(edge: .bottom, spacing: 0) { if visible { bar } }
+        } else {
+            overlay(alignment: .bottom) { if visible { bar } }
         }
     }
 }
