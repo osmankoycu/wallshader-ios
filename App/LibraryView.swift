@@ -17,6 +17,22 @@ struct LibraryView: View {
     @Environment(\.undoManager) private var undoManager
     @State private var renaming: WallpaperDocument?
     @State private var renameText = ""
+    /// The home's two shelves (Photos' Library/Collections pill) plus the
+    /// system tab bar's detached action circle (+, search-role slot).
+    enum LibraryTab: Hashable { case all, favorites, new }
+    @State private var tab: LibraryTab = .all
+
+    /// Intercepts the + pseudo-tab: it opens the creation sheet and the
+    /// selection snaps back instead of switching content.
+    private var tabSelection: Binding<LibraryTab> {
+        Binding(get: { tab }, set: { next in
+            if next == .new {
+                showingNewSheet = true
+            } else {
+                tab = next
+            }
+        })
+    }
     // Photos-style select mode (grid only): bulk share + bulk delete.
     @State private var selecting = false
     @State private var selected: Set<UUID> = []
@@ -41,8 +57,14 @@ struct LibraryView: View {
     @State private var hiddenNewDocID: UUID?
 
     private var visibleDocuments: [WallpaperDocument] {
-        guard let hiddenNewDocID else { return library.documents }
-        return library.documents.filter { $0.id != hiddenNewDocID }
+        var docs = library.documents
+        if let hiddenNewDocID {
+            docs = docs.filter { $0.id != hiddenNewDocID }
+        }
+        if tab == .favorites {
+            docs = docs.filter { $0.favorite == true }
+        }
+        return docs
     }
 
     /// The select bar's staged entrance: in after the + finished popping
@@ -145,8 +167,46 @@ struct LibraryView: View {
     }
 
     private var grid: some View {
+        Group {
+            if #available(iOS 18.0, *) {
+                TabView(selection: tabSelection) {
+                    Tab("All", systemImage: "circle.bottomrighthalf.pattern.checkered",
+                        value: LibraryTab.all) {
+                        gridContent(customChrome: false)
+                    }
+                    Tab("Favorites", systemImage: "heart", value: .favorites) {
+                        gridContent(customChrome: false)
+                    }
+                    Tab("New", systemImage: "plus", value: .new, role: .search) {
+                        gridContent(customChrome: false)
+                    }
+                }
+            } else {
+                gridContent(customChrome: true)
+            }
+        }
+    }
+
+    private func gridContent(customChrome: Bool) -> some View {
         ScrollViewReader { proxy in
         ScrollView {
+            if tab == .favorites && visibleDocuments.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "heart")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.white.opacity(0.35))
+                    Text("No Favorites")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Text("Tap and hold a wallpaper to add to favorites.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 48)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 180)
+            }
             LazyVGrid(columns: columns, spacing: Self.gridGap) {
                 ForEach(visibleDocuments) { doc in
                     gridTile(doc)
@@ -174,25 +234,32 @@ struct LibraryView: View {
         .background(Color(white: 0.06))
         .preferredColorScheme(.dark)
         .toolbar(.hidden, for: .navigationBar)
+        .toolbar(selecting ? .hidden : .automatic, for: .tabBar)
         .libraryHeaderBar(header)
-        .overlay(alignment: .bottomTrailing) {
-            // Photos' big corner button (its search): our New Wallpaper,
-            // hugging the tab-bar zone. Value-driven pop (down fast on
-            // entering select mode, back with a delayed spring after the
-            // bar left).
-            Button {
-                showingNewSheet = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 60, height: 60)
-                    .chromeGlass(in: Circle(), tint: .accentColor)
+        .overlay(alignment: .bottomLeading) {
+            if customChrome {
+                tabPill
+                    .modifier(ChromeSwap(hidden: selecting))
+                    .padding(.leading, 20)
+                    .padding(.bottom, 2)
             }
-            .accessibilityLabel("New Wallpaper")
-            .modifier(ChromeSwap(hidden: selecting))
-            .padding(.trailing, 20)
-            .padding(.bottom, 2)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if customChrome {
+                Button {
+                    showingNewSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 60, height: 60)
+                        .chromeGlass(in: Circle(), tint: .accentColor)
+                }
+                .accessibilityLabel("New Wallpaper")
+                .modifier(ChromeSwap(hidden: selecting))
+                .padding(.trailing, 20)
+                .padding(.bottom, 2)
+            }
         }
         .libraryBottomBar(visible: selecting, selectBar.transition(Self.stagedBar))
         // While the detail pager swipes between wallpapers, keep the grid
@@ -212,7 +279,7 @@ struct LibraryView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Wallshader")
+                Text(tab == .favorites ? "Favorites" : "Wallshader")
                     .font(.largeTitle.weight(.bold))
                     .foregroundStyle(.white)
                 Text(visibleDocuments.count == 1 ? "1 Wallpaper"
@@ -488,8 +555,52 @@ struct LibraryView: View {
         }
     }
 
+    /// Photos' Library/Collections pill: All + Favorites.
+    private var tabPill: some View {
+        HStack(spacing: 0) {
+            tabButton(.all, title: "All",
+                      systemImage: "circle.bottomrighthalf.pattern.checkered")
+            tabButton(.favorites, title: "Favorites", systemImage: "heart")
+        }
+        .padding(4)
+        .chromeGlass(in: Capsule())
+    }
+
+    private func tabButton(_ target: LibraryTab, title: String,
+                           systemImage: String) -> some View {
+        let selected = tab == target
+        return Button {
+            withAnimation(.easeInOut(duration: 0.15)) { tab = target }
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(selected ? Color.accentColor : .white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+            .background {
+                if selected {
+                    Capsule().fill(.white.opacity(0.14))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(title))
+    }
+
     @ViewBuilder
     private func contextMenu(_ doc: WallpaperDocument) -> some View {
+        Button {
+            library.setFavorite(!(doc.favorite == true), id: doc.id)
+        } label: {
+            doc.favorite == true
+                ? Label("Remove from Favorites", systemImage: "heart.slash")
+                : Label("Add to Favorites", systemImage: "heart")
+        }
+
         Button {
             renameText = doc.name
             renaming = doc
