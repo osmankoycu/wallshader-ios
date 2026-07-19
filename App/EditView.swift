@@ -101,12 +101,12 @@ struct EditView: View {
                 Button("Cancel") { cancel() }
                     .font(.body.weight(.medium))
                     .padding(.horizontal, 18).padding(.vertical, 9)
-                    .background(Capsule().fill(.white.opacity(0.12)))
+                    .chromeGlass(in: Capsule())
                 Spacer()
                 Button("Done") { done() }
                     .font(.body.weight(.semibold))
                     .padding(.horizontal, 18).padding(.vertical, 9)
-                    .background(Capsule().fill(.white.opacity(0.12)))
+                    .chromeGlass(in: Capsule())
             }
             .foregroundStyle(.white)
 
@@ -131,7 +131,7 @@ struct EditView: View {
                 }
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.white)
-                .background(Capsule().fill(.white.opacity(0.12)))
+                .chromeGlass(in: Capsule())
 
                 Spacer()
 
@@ -209,7 +209,7 @@ struct EditView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
-        .background(Capsule().fill(.white.opacity(0.1)))
+        .chromeGlass(in: Capsule())
     }
 }
 

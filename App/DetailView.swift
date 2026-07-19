@@ -165,7 +165,7 @@ struct DetailView: View {
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 7)
-            .background(Capsule().fill(.ultraThinMaterial))
+            .chromeGlass(in: Capsule())
 
             Spacer()
 
@@ -191,8 +191,8 @@ struct DetailView: View {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(.ultraThinMaterial))
+                    .frame(width: 44, height: 44)
+                    .chromeGlass(in: Circle())
             }
             .accessibilityLabel("More")
         }
@@ -218,9 +218,9 @@ struct DetailView: View {
         .pickerStyle(.segmented)
         .frame(maxWidth: 300)
         // Segmented alone disappears over bright wallpapers — back it with
-        // the same material as every other chrome pill.
+        // the same glass as every other chrome pill.
         .padding(4)
-        .background(Capsule().fill(.ultraThinMaterial))
+        .chromeGlass(in: Capsule())
     }
 
     // MARK: - Filmstrip (Photos-style neighbor strip)
@@ -308,7 +308,7 @@ struct DetailView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 26)
             .padding(.vertical, 12)
-            .background(Capsule().fill(.ultraThinMaterial))
+            .chromeGlass(in: Capsule())
 
             Spacer()
 
@@ -323,7 +323,7 @@ struct DetailView: View {
                 .font(.system(size: 17))
                 .foregroundStyle(.white)
                 .frame(width: 44, height: 44)
-                .background(Circle().fill(.ultraThinMaterial))
+                .chromeGlass(in: Circle())
         }
         .accessibilityLabel(Text(label))
     }
