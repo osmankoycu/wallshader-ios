@@ -78,7 +78,7 @@ struct LibraryView: View {
                 .opacity(hidden ? 0 : 1)
                 .allowsHitTesting(!hidden)
                 .animation(hidden ? .easeIn(duration: 0.14)
-                                  : .spring(response: 0.32, dampingFraction: 0.72).delay(0.18),
+                                  : .spring(response: 0.32, dampingFraction: 0.72).delay(0.12),
                            value: hidden)
         }
     }
@@ -200,6 +200,7 @@ struct LibraryView: View {
             selectBar
                 .modifier(ChromeSwap(hidden: !selecting))
         }
+        .frame(height: 62)
         .padding(.bottom, 2)
     }
 
@@ -226,7 +227,7 @@ struct LibraryView: View {
             }
             LazyVGrid(columns: columns, spacing: Self.gridGap) {
                 ForEach(docs) { doc in
-                    gridTile(doc)
+                    gridTile(doc, shelf: shelf)
                         .id(doc.id)
                         .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
@@ -322,7 +323,7 @@ struct LibraryView: View {
     }
 
     @ViewBuilder
-    private func gridTile(_ doc: WallpaperDocument) -> some View {
+    private func gridTile(_ doc: WallpaperDocument, shelf: LibraryTab) -> some View {
         let isSelected = selected.contains(doc.id)
         let tile = Button {
             if selecting {
@@ -344,6 +345,19 @@ struct LibraryView: View {
                     RoundedRectangle(cornerRadius: Self.tileCorner)
                         .strokeBorder(.white.opacity(0.2), lineWidth: 1)
                         .blendMode(.plusLighter)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    // Favorites wear a small persistent heart — pops in on
+                    // add, pops away on remove. Only on All: the Favorites
+                    // shelf IS the indicator.
+                    if shelf == .all && doc.favorite == true {
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.white)
+                            .shadow(color: .black.opacity(0.5), radius: 5)
+                            .padding(7)
+                            .transition(.scale(scale: 0.3).combined(with: .opacity))
+                    }
                 }
                 .overlay(alignment: .bottomLeading) {
                     if selecting && isSelected {
@@ -586,7 +600,9 @@ struct LibraryView: View {
     @ViewBuilder
     private func contextMenu(_ doc: WallpaperDocument) -> some View {
         Button {
-            library.setFavorite(!(doc.favorite == true), id: doc.id)
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                library.setFavorite(!(doc.favorite == true), id: doc.id)
+            }
         } label: {
             doc.favorite == true
                 ? Label("Remove from Favorites", systemImage: "heart.slash")
