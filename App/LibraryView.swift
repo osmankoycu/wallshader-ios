@@ -78,7 +78,7 @@ struct LibraryView: View {
         }
         .confirmationDialog("Delete \(selected.count) wallpapers?",
                             isPresented: $confirmingBulkDelete, titleVisibility: .visible) {
-            Button("Delete \(selected.count) Wallpapers", role: .destructive) { bulkDelete() }
+            Button("Delete", role: .destructive) { bulkDelete() }
         }
         .sheet(isPresented: $showingShare) { ShareSheet(items: shareURLs) }
         .sheet(isPresented: $app.showingPaywall) { PaywallView() }
@@ -146,14 +146,6 @@ struct LibraryView: View {
             .padding(.bottom, 2)
         }
         .libraryBottomBar(visible: selecting, selectBar.transition(Self.stagedBar))
-        .overlay {
-            if preparingShare {
-                ZStack {
-                    Color.black.opacity(0.35).ignoresSafeArea()
-                    ProgressView("Preparing…").tint(.white)
-                }
-            }
-        }
     }
 
     /// Photos' Library header, hand-built and PINNED: the big title +
@@ -189,7 +181,7 @@ struct LibraryView: View {
                     selected.removeAll()
                 }
             } label: {
-                Image(systemName: selecting ? "xmark" : "checkmark.circle")
+                Image(systemName: selecting ? "xmark" : "circle.grid.2x2.topleft.checkmark.filled")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
@@ -263,11 +255,17 @@ struct LibraryView: View {
             Button {
                 prepareShare()
             } label: {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 17))
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .chromeGlass(in: Circle())
+                Group {
+                    if preparingShare {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 17))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .frame(width: 44, height: 44)
+                .chromeGlass(in: Circle())
             }
             .disabled(selected.isEmpty || preparingShare)
             .opacity(selected.isEmpty ? 0.4 : 1)
