@@ -20,6 +20,10 @@ struct DetailView: View {
     // is active and the editor UI fades in around it.
     @State private var heroActive = false
     @State private var editorRevealed = false
+    /// Return flight in progress: the detail chrome stays hidden and then
+    /// simply APPEARS at the end — no reverse slide (feedback: the chrome
+    /// only becomes visible once the wallpaper is fullscreen again).
+    @State private var closingEditor = false
     @State private var editSlotAnchor: Anchor<CGRect>?
     @StateObject private var models = ModelCache()
     @State private var editing = false
@@ -141,6 +145,7 @@ struct DetailView: View {
         .overlay {
             if editing {
                 EditView(model: currentModel, heroMode: true,
+                         revealed: editorRevealed,
                          onClose: { closeEditor() })
                 .opacity(editorRevealed ? 1 : 0)
             }
@@ -229,6 +234,7 @@ struct DetailView: View {
     }
 
     private func closeEditor() {
+        closingEditor = true
         withAnimation(.spring(response: 0.42, dampingFraction: 0.86),
                       completionCriteria: .logicallyComplete) {
             editorRevealed = false
@@ -236,6 +242,7 @@ struct DetailView: View {
             editing = false
             heroActive = false
             editSlotAnchor = nil
+            closingEditor = false
         }
     }
 
@@ -287,12 +294,21 @@ struct DetailView: View {
 
     private var chrome: some View {
         VStack(spacing: 0) {
+            // Directional exit under the edit morph: top chrome slides up
+            // and away, bottom chrome slides down — the editor's pieces
+            // arrive along the same axes.
             topBar
+                .offset(y: editorRevealed ? -56 : 0)
+                .opacity(editorRevealed || closingEditor ? 0 : 1)
             Spacer()
-            filmstrip
-                .padding(.bottom, 10)
-            bottomBar
-                .padding(.bottom, 4)
+            Group {
+                filmstrip
+                    .padding(.bottom, 10)
+                bottomBar
+                    .padding(.bottom, 4)
+            }
+            .offset(y: editorRevealed ? 56 : 0)
+            .opacity(editorRevealed || closingEditor ? 0 : 1)
         }
         .padding(.horizontal, 16)
         .transition(.opacity)

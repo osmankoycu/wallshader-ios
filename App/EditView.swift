@@ -17,6 +17,9 @@ struct EditView: View {
     /// detail screen flies its single hero layer into it) and closing goes
     /// through the owner instead of a dismissal.
     var heroMode: Bool = false
+    /// Drives the morph choreography in hero mode: the header arrives
+    /// from the top, controls and tab bar from the bottom.
+    var revealed: Bool = true
     var onClose: (() -> Void)? = nil
     @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -57,6 +60,7 @@ struct EditView: View {
                 header
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
+                    .offset(y: revealed ? 0 : -56)
 
                 GeometryReader { geo in
                     ZStack {
@@ -84,11 +88,14 @@ struct EditView: View {
                 }
                 .padding(.vertical, 10)
 
-                controlsArea
-                    .frame(minHeight: 132)
-                tabBar
-                    .padding(.bottom, 8)
-                    .padding(.top, 6)
+                Group {
+                    controlsArea
+                        .frame(minHeight: 132)
+                    tabBar
+                        .padding(.bottom, 8)
+                        .padding(.top, 6)
+                }
+                .offset(y: revealed ? 0 : 56)
             }
         }
         .preferredColorScheme(.dark)
