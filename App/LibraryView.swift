@@ -103,21 +103,29 @@ struct LibraryView: View {
         }
     }
 
-    /// Photos-library grid: edge-to-edge, hairline gutters, floating
-    /// chrome over a scrim — no cards, the wallpapers ARE the surface.
+    /// Rounded tiles with one gutter width everywhere: between columns,
+    /// between rows, AND at the screen edges.
+    private static let gridGap: CGFloat = 6
+    private static let tileCorner: CGFloat = 10
+
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 118, maximum: 190), spacing: 2)]
+        [GridItem(.adaptive(minimum: 118, maximum: 190), spacing: Self.gridGap)]
     }
 
     private var grid: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 2) {
+            LazyVGrid(columns: columns, spacing: Self.gridGap) {
                 ForEach(library.documents) { doc in
                     gridTile(doc)
                 }
                 .onMove(perform: move)
             }
+            .padding(.horizontal, Self.gridGap * 1.5)
             .padding(.top, 2)
+            // The grid draws under the home indicator (ignored safe area),
+            // so give the content a bottom runway: the last row can scroll
+            // fully clear of the screen edge.
+            .padding(.bottom, 48)
         }
         .softTopEdge()
         .softBottomEdge()
@@ -221,7 +229,16 @@ struct LibraryView: View {
                 .frame(maxWidth: .infinity)
                 .aspectRatio(AppModel.currentDevice.canonicalAspect,
                              contentMode: .fit)
-                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: Self.tileCorner))
+                // The glass family's rim light, as a hairline: a real
+                // glassEffect would blur/tint the artwork (and cost GPU per
+                // tile) — a lit gradient stroke in plusLighter reads the
+                // same and is free.
+                .overlay {
+                    RoundedRectangle(cornerRadius: Self.tileCorner)
+                        .strokeBorder(.white.opacity(0.2), lineWidth: 1)
+                        .blendMode(.plusLighter)
+                }
                 .overlay(alignment: .bottomLeading) {
                     if selecting && isSelected {
                         Image(systemName: "checkmark.circle.fill")
@@ -233,10 +250,11 @@ struct LibraryView: View {
                 }
                 .overlay {
                     if selecting && isSelected {
-                        Rectangle().strokeBorder(.white.opacity(0.9), lineWidth: 2)
+                        RoundedRectangle(cornerRadius: Self.tileCorner)
+                            .strokeBorder(.white.opacity(0.9), lineWidth: 2)
                     }
                 }
-                .contentShape(Rectangle())
+                .contentShape(RoundedRectangle(cornerRadius: Self.tileCorner))
                 .accessibilityLabel(Text(doc.name))
         }
         .buttonStyle(.plain)
