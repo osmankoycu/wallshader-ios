@@ -337,6 +337,16 @@ struct DetailView: View {
 
             Menu {
                 Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                        library.setFavorite(!(currentDocument?.favorite == true),
+                                            id: currentID)
+                    }
+                } label: {
+                    currentDocument?.favorite == true
+                        ? Label("Remove from Favorites", systemImage: "heart.slash")
+                        : Label("Add to Favorites", systemImage: "heart")
+                }
+                Button {
                     renameText = currentDocument?.name ?? ""
                     renaming = true
                 } label: { Label("Rename", systemImage: "pencil") }
