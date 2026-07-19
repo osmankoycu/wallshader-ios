@@ -6,6 +6,18 @@ import SwiftUI
 /// whole app reads as one family (UX feedback: the toolbar buttons "come
 /// from a default place" — the custom chrome didn't).
 extension View {
+    /// The system's progressive-blur scroll edge (what Photos runs under
+    /// its pinned Library header) — no-op before OS 26, where the header
+    /// keeps a gradient scrim instead.
+    @ViewBuilder
+    func softTopEdge() -> some View {
+        if #available(iOS 26.0, *) {
+            scrollEdgeEffectStyle(.soft, for: .top)
+        } else {
+            self
+        }
+    }
+
     @ViewBuilder
     func chromeGlass(in shape: some Shape) -> some View {
         if #available(iOS 26.0, *) {

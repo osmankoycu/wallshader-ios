@@ -14,6 +14,13 @@ struct LibraryView: View {
     @Environment(\.undoManager) private var undoManager
     @State private var renaming: WallpaperDocument?
     @State private var renameText = ""
+    // Photos-style select mode (grid only): bulk share + bulk delete.
+    @State private var selecting = false
+    @State private var selected: Set<UUID> = []
+    @State private var confirmingBulkDelete = false
+    @State private var shareURLs: [URL] = []
+    @State private var showingShare = false
+    @State private var preparingShare = false
 
     var body: some View {
         Group {
@@ -25,22 +32,29 @@ struct LibraryView: View {
         }
         .navigationTitle("Wallshader")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    newWallpaper()
-                } label: {
-                    Label("New Wallpaper", systemImage: "plus")
+            if style == .sidebar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        newWallpaper()
+                    } label: {
+                        Label("New Wallpaper", systemImage: "plus")
+                    }
+                    .accessibilityLabel("New Wallpaper")
                 }
-                .accessibilityLabel("New Wallpaper")
-            }
-            ToolbarItem(placement: .topBarLeading) {
-                NavigationLink {
-                    SettingsView()
-                } label: {
-                    Label("Settings", systemImage: "gearshape")
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink {
+                        SettingsView()
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
                 }
             }
         }
+        .confirmationDialog("Delete \(selected.count) wallpapers?",
+                            isPresented: $confirmingBulkDelete, titleVisibility: .visible) {
+            Button("Delete \(selected.count) Wallpapers", role: .destructive) { bulkDelete() }
+        }
+        .sheet(isPresented: $showingShare) { ShareSheet(items: shareURLs) }
         .sheet(isPresented: $app.showingPaywall) { PaywallView() }
         .alert("Rename Wallpaper", isPresented: Binding(
             get: { renaming != nil },
@@ -73,27 +87,265 @@ struct LibraryView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 2) {
                 ForEach(library.documents) { doc in
-                    Button {
-                        app.open(doc.id)
-                    } label: {
-                        thumbnailImage(doc)
-                            .frame(maxWidth: .infinity)
-                            .aspectRatio(AppModel.currentDevice.canonicalAspect,
-                                         contentMode: .fit)
-                            .clipped()
-                            .contentShape(Rectangle())
-                            .accessibilityLabel(Text(doc.name))
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu { contextMenu(doc) }
+                    gridTile(doc)
                 }
                 .onMove(perform: move)
             }
             .padding(.top, 2)
         }
+        .softTopEdge()
         .ignoresSafeArea(edges: .bottom)
         .background(Color(white: 0.06))
         .preferredColorScheme(.dark)
+        .toolbar(.hidden, for: .navigationBar)
+        .libraryHeaderBar(header)
+        .overlay(alignment: .bottomTrailing) {
+            if !selecting {
+                // Photos' big corner button (its search): our New
+                // Wallpaper, hugging the tab-bar zone at the very bottom.
+                Button {
+                    newWallpaper()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 52, height: 52)
+                        .chromeGlass(in: Circle())
+                }
+                .accessibilityLabel("New Wallpaper")
+                .padding(.trailing, 20)
+                .padding(.bottom, 2)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if selecting { selectBar }
+        }
+        .overlay {
+            if preparingShare {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                    ProgressView("Preparing…").tint(.white)
+                }
+            }
+        }
+    }
+
+    /// Photos' Library header, hand-built and PINNED: the big title +
+    /// count at left, the two circle buttons on the same line at right,
+    /// the grid scrolling underneath a top scrim. (The system nav bar
+    /// can't align its items with a large title, hence custom.)
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Wallshader")
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundStyle(.white)
+                Text(library.documents.count == 1 ? "1 Wallpaper"
+                     : "\(library.documents.count) Wallpapers")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            NavigationLink {
+                SettingsView()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .chromeGlass(in: Circle())
+            }
+            .accessibilityLabel("Settings")
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    selecting.toggle()
+                    selected.removeAll()
+                }
+            } label: {
+                Image(systemName: selecting ? "xmark" : "checkmark.circle")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .chromeGlass(in: Circle())
+            }
+            .accessibilityLabel(selecting ? "Done Selecting" : "Select")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 2)
+        .padding(.bottom, 14)
+        .background {
+            // OS 26 gets the real progressive blur from softTopEdge();
+            // older systems fall back to a gradient scrim.
+            if #available(iOS 26.0, *) {
+                Color.clear
+            } else {
+                LinearGradient(stops: [.init(color: .black.opacity(0.75), location: 0),
+                                       .init(color: .black.opacity(0), location: 1)],
+                               startPoint: .top, endPoint: .bottom)
+                    .padding(.bottom, -36)
+                    .ignoresSafeArea(edges: .top)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func gridTile(_ doc: WallpaperDocument) -> some View {
+        let isSelected = selected.contains(doc.id)
+        let tile = Button {
+            if selecting {
+                if isSelected { selected.remove(doc.id) } else { selected.insert(doc.id) }
+            } else {
+                app.open(doc.id)
+            }
+        } label: {
+            thumbnailImage(doc)
+                .frame(maxWidth: .infinity)
+                .aspectRatio(AppModel.currentDevice.canonicalAspect,
+                             contentMode: .fit)
+                .clipped()
+                .overlay(alignment: .bottomLeading) {
+                    if selecting && isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .blue)
+                            .font(.system(size: 22))
+                            .padding(6)
+                    }
+                }
+                .overlay {
+                    if selecting && isSelected {
+                        Rectangle().strokeBorder(.white.opacity(0.9), lineWidth: 2)
+                    }
+                }
+                .contentShape(Rectangle())
+                .accessibilityLabel(Text(doc.name))
+        }
+        .buttonStyle(.plain)
+        if selecting {
+            tile
+        } else {
+            tile.contextMenu { contextMenu(doc) }
+        }
+    }
+
+    /// Photos' select-mode bar: Share left, count center, Delete right.
+    private var selectBar: some View {
+        HStack {
+            Button {
+                prepareShare()
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .chromeGlass(in: Circle())
+            }
+            .disabled(selected.isEmpty || preparingShare)
+            .opacity(selected.isEmpty ? 0.4 : 1)
+            .accessibilityLabel("Share Selected")
+
+            Spacer()
+
+            Text(selected.isEmpty ? "Select Items" : "\(selected.count) Selected")
+                .font(.headline)
+                .foregroundStyle(.white)
+
+            Spacer()
+
+            Button {
+                confirmingBulkDelete = true
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .chromeGlass(in: Circle())
+            }
+            .disabled(selected.isEmpty)
+            .opacity(selected.isEmpty ? 0.4 : 1)
+            .accessibilityLabel("Delete Selected")
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 4)
+    }
+
+    /// One undo step restores every deleted wallpaper (photos included).
+    private func bulkDelete() {
+        let docs = library.documents.filter { selected.contains($0.id) }
+        let snapshots = docs.map { ($0, library.sourceImageData(for: $0)) }
+        for doc in docs { library.delete(doc.id) }
+        undoManager?.registerUndo(withTarget: library) { lib in
+            for (doc, image) in snapshots { lib.restore(doc, imagePNG: image) }
+        }
+        undoManager?.setActionName(docs.count == 1 ? "Delete Wallpaper" : "Delete Wallpapers")
+        selected.removeAll()
+    }
+
+    /// Bulk share renders each selection at device resolution (the same
+    /// output the detail screen's Share produces), then hands the PNGs to
+    /// the system sheet.
+    private func prepareShare() {
+        guard let renderer = app.renderer, !selected.isEmpty else { return }
+        let docs = library.documents.filter { selected.contains($0.id) }
+        let device = AppModel.currentDevice
+        let box = RendererBox(renderer: renderer)
+        let jobs: [(doc: WallpaperDocument, source: URL?, ambient: AmbientRenderSpec?)] = docs.map {
+            ($0,
+             $0.needsSourceImage ? library.sourceImageURL(for: $0) : nil,
+             library.ambientSpec(for: $0, settings: $0.resolvedVariant(for: device, imageAspect: nil).ambient))
+        }
+        preparingShare = true
+        Task {
+            var urls: [URL] = []
+            for job in jobs {
+                if let url = await Self.renderShareURL(job: job, device: device, box: box) {
+                    urls.append(url)
+                }
+            }
+            await MainActor.run {
+                preparingShare = false
+                guard !urls.isEmpty else { return }
+                shareURLs = urls
+                showingShare = true
+            }
+        }
+    }
+
+    private static func renderShareURL(job: (doc: WallpaperDocument, source: URL?, ambient: AmbientRenderSpec?),
+                                       device: DeviceClass,
+                                       box: RendererBox) async -> URL? {
+        await Task.detached(priority: .userInitiated) { () -> URL? in
+            let doc = job.doc
+            guard let shaderId = doc.shaderId else { return nil }
+            var texture: MTLTexture?
+            if let source = job.source {
+                if let adjustments = doc.adjustments, !adjustments.isNeutral,
+                   let adjusted = WallpaperLibrary.adjustedImage(at: source,
+                                                                adjustments: adjustments) {
+                    texture = try? box.renderer.loadTexture(cgImage: adjusted)
+                } else {
+                    texture = try? box.renderer.loadTexture(url: source)
+                }
+            }
+            let aspect = texture.map { Double($0.width) / Double(max(1, $0.height)) }
+            guard let params = doc.shaderParams(for: device, imageAspect: aspect) else { return nil }
+            let px = device.canonicalPixels
+            guard let image = try? box.offscreen.renderImage(
+                shaderId: shaderId, params: params,
+                pixelWidth: Int(px.width), pixelHeight: Int(px.height),
+                pixelRatio: device == .ipad ? 2 : 3,
+                timeSeconds: Float(params.frame * 0.001),
+                texture: texture, ambient: job.ambient) else { return nil }
+            let name = doc.name.components(separatedBy: CharacterSet(charactersIn: "/:\\"))
+                .joined(separator: "-")
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("share-\(UUID().uuidString)", isDirectory: true)
+                .appendingPathComponent(name).appendingPathExtension("png")
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            guard (try? box.offscreen.writePNG(image, to: url)) != nil else { return nil }
+            return url
+        }.value
     }
 
     private var sidebarList: some View {
@@ -253,6 +505,21 @@ final class DeviceThumbnailStore: ObservableObject {
             }
         }
         return hit?.image
+    }
+}
+
+private extension View {
+    /// A custom top bar that PARTICIPATES in scroll edge effects: on OS 26
+    /// safeAreaBar is what makes the system draw its progressive blur
+    /// behind the header (safeAreaInset content doesn't get it) — older
+    /// systems fall back to the inset + the header's own gradient scrim.
+    @ViewBuilder
+    func libraryHeaderBar<Header: View>(_ header: Header) -> some View {
+        if #available(iOS 26.0, *) {
+            safeAreaBar(edge: .top, spacing: 0) { header }
+        } else {
+            safeAreaInset(edge: .top, spacing: 0) { header }
+        }
     }
 }
 
