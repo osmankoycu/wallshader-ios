@@ -38,7 +38,7 @@ struct SaveWallpaperButton: View {
                         ProgressView().tint(.white)
                     } else {
                         Image(systemName: "arrow.down.circle.fill")
-                            .font(.system(size: 26))
+                            .font(.system(size: 20, weight: .semibold))
                     }
                 }
                 .disabled(saving || !(model.document?.isAppliable ?? false))
@@ -56,7 +56,7 @@ struct SaveWallpaperButton: View {
                     }
                 } label: {
                     Image(systemName: "square.and.arrow.down")
-                        .font(.system(size: 22))
+                        .font(.system(size: 20, weight: .semibold))
                 }
                 .disabled(!(model.document?.isAppliable ?? false))
                 .accessibilityLabel("Export")

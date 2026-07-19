@@ -23,8 +23,9 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(tile.waitForExistence(timeout: 15) || row.exists,
                       "seeded library visible")
         (tile.exists ? tile : row).tap()
-        // Detail: the variant selector is up (current device preselected).
-        XCTAssertTrue(app.buttons["iPhone"].waitForExistence(timeout: 15),
-                      "detail opened with the variant selector")
+        // Detail: the bottom action bar is up (variant bar v2 moved the
+        // device selector into the More menu's size sheet).
+        XCTAssertTrue(app.buttons["Edit"].waitForExistence(timeout: 15),
+                      "detail opened with the action bar")
     }
 }

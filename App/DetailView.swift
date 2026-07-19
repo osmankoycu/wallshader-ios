@@ -35,6 +35,7 @@ struct DetailView: View {
     @State private var stripScrubbing = false
     @State private var stripBaseline: CGFloat?
     @State private var stripTapJump = false
+    @State private var showingSizeSheet = false
 
     init(documentID: UUID, zoomNamespace: Namespace.ID? = nil) {
         _currentID = State(initialValue: documentID)
@@ -118,6 +119,9 @@ struct DetailView: View {
             EditView(model: currentModel)
         }
         .sheet(isPresented: $showingGuide) { GuideSheet() }
+        .sheet(isPresented: $showingSizeSheet) {
+            ExportSizeSheet(model: currentModel)
+        }
         .alert("Rename Wallpaper", isPresented: $renaming) {
             TextField("Name", text: $renameText)
             Button("Rename") {
@@ -213,8 +217,6 @@ struct DetailView: View {
     private var chrome: some View {
         VStack(spacing: 0) {
             topBar
-            variantPill
-                .padding(.top, 6)
             Spacer()
             filmstrip
                 .padding(.bottom, 10)
@@ -248,6 +250,12 @@ struct DetailView: View {
 
             Menu {
                 Button {
+                    showingSizeSheet = true
+                } label: {
+                    Label("Export at a Different Size", systemImage: "square.and.arrow.up.on.square")
+                }
+                Divider()
+                Button {
                     renameText = currentDocument?.name ?? ""
                     renaming = true
                 } label: { Label("Rename", systemImage: "pencil") }
@@ -266,7 +274,7 @@ struct DetailView: View {
                 } label: { Label("Delete", systemImage: "trash") }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
                     .chromeGlass(in: Circle())
@@ -277,27 +285,10 @@ struct DetailView: View {
 
     private var subtitle: String {
         guard let doc = currentDocument else { return "" }
-        let device = currentModel.selectedDevice.displayName
+        let device = currentModel.selectedDevice.categoryName
         let state = currentModel.selectedDevice == .desktop
             ? "" : (doc.isCustomized(currentModel.selectedDevice) ? " · Customized" : " · Auto")
         return device + state
-    }
-
-    private var variantPill: some View {
-        Picker("Device", selection: Binding(
-            get: { currentModel.selectedDevice },
-            set: { currentModel.selectDevice($0) }
-        )) {
-            ForEach(DeviceClass.allCases) { device in
-                Text(device.displayName).tag(device)
-            }
-        }
-        .pickerStyle(.segmented)
-        .frame(maxWidth: 300)
-        // Segmented alone disappears over bright wallpapers — back it with
-        // the same glass as every other chrome pill.
-        .padding(4)
-        .chromeGlass(in: Capsule())
     }
 
     // MARK: - Filmstrip (Photos-style neighbor strip)
@@ -426,7 +417,7 @@ struct DetailView: View {
                     } label: {
                         Image(systemName: (currentModel.editingVariant?.animated ?? false)
                               ? "pause.circle" : "play.circle")
-                            .font(.system(size: 21))
+                            .font(.system(size: 20, weight: .semibold))
                     }
                     .accessibilityLabel("Animated")
                 }
@@ -439,7 +430,7 @@ struct DetailView: View {
                     editing = true
                 } label: {
                     Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 20))
+                        .font(.system(size: 20, weight: .semibold))
                 }
                 .disabled(!(currentDocument?.isAppliable ?? false)
                           && currentDocument?.kind == nil)
@@ -460,7 +451,7 @@ struct DetailView: View {
                             action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 17))
+                .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: 44, height: 44)
                 .chromeGlass(in: Circle())
@@ -514,6 +505,126 @@ private extension UIViewController {
     }
 }
 
+
+/// "Export at a Different Size": the Mac size catalog, used on mobile
+/// purely as EXPORT targets — the preview never changes size here. Each
+/// row renders that category's variant (auto-derived when untouched) at
+/// the preset's resolution and hands the PNG to the share sheet.
+struct ExportSizeSheet: View {
+    @ObservedObject var model: EditorModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var exporting: String?
+    @State private var shareURL: URL?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(DeviceClass.allCases) { device in
+                    Section(device.categoryName) {
+                        ForEach(DeviceSizeCatalog.presets(for: device)) { preset in
+                            row(preset, device: device)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Export Size")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .interactiveDismissDisabled(exporting != nil)
+        .sheet(item: $shareURL) { url in
+            ShareSheet(items: [url])
+        }
+    }
+
+    private func row(_ preset: DeviceSizePreset, device: DeviceClass) -> some View {
+        Button {
+            export(preset, device: device)
+        } label: {
+            HStack {
+                Label {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(preset.name)
+                            .foregroundStyle(.white)
+                        Text(preset.sizeLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: device.categorySymbol)
+                }
+                Spacer()
+                if exporting == preset.id {
+                    ProgressView()
+                }
+            }
+        }
+        .disabled(exporting != nil)
+    }
+
+    private func export(_ preset: DeviceSizePreset, device: DeviceClass) {
+        guard exporting == nil, let renderer = model.app.renderer,
+              let doc = model.document, doc.shaderId != nil else { return }
+        model.flushPendingWriteback()
+        let library = model.library
+        let sourceURL = doc.needsSourceImage ? library.sourceImageURL(for: doc) : nil
+        let ambient = library.ambientSpec(
+            for: doc, settings: doc.resolvedVariant(for: device, imageAspect: nil).ambient)
+        exporting = preset.id
+        let box = ExportRendererBox(renderer: renderer)
+        Task {
+            let url = await Task.detached(priority: .userInitiated) { () -> URL? in
+                var texture: MTLTexture?
+                if let sourceURL {
+                    if let adjustments = doc.adjustments, !adjustments.isNeutral,
+                       let adjusted = WallpaperLibrary.adjustedImage(at: sourceURL,
+                                                                    adjustments: adjustments) {
+                        texture = try? box.renderer.loadTexture(cgImage: adjusted)
+                    } else {
+                        texture = try? box.renderer.loadTexture(url: sourceURL)
+                    }
+                }
+                let aspect = texture.map { Double($0.width) / Double(max(1, $0.height)) }
+                guard let shaderId = doc.shaderId,
+                      let params = doc.shaderParams(for: device, imageAspect: aspect),
+                      let image = try? box.offscreen.renderImage(
+                          shaderId: shaderId, params: params,
+                          pixelWidth: preset.pixelWidth, pixelHeight: preset.pixelHeight,
+                          pixelRatio: preset.pixelRatio,
+                          timeSeconds: Float(params.frame * 0.001),
+                          texture: texture, ambient: ambient) else { return nil }
+                let name = doc.name.components(separatedBy: CharacterSet(charactersIn: "/:\\"))
+                    .joined(separator: "-")
+                let url = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("export-\(UUID().uuidString)", isDirectory: true)
+                    .appendingPathComponent("\(name) \(preset.sizeLabel)")
+                    .appendingPathExtension("png")
+                try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                         withIntermediateDirectories: true)
+                guard (try? box.offscreen.writePNG(image, to: url)) != nil else { return nil }
+                return url
+            }.value
+            await MainActor.run {
+                exporting = nil
+                if let url { shareURL = url }
+            }
+        }
+    }
+}
+
+private struct ExportRendererBox: @unchecked Sendable {
+    let renderer: ShaderRenderer
+    let offscreen: OffscreenRenderer
+    init(renderer: ShaderRenderer) {
+        self.renderer = renderer
+        offscreen = OffscreenRenderer(renderer: renderer)
+    }
+}
 
 /// One EditorModel per visited document, created exactly once — creating
 /// models during view-body evaluation (and stashing them via async state
