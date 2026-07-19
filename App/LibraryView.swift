@@ -201,7 +201,6 @@ struct LibraryView: View {
                 .modifier(ChromeSwap(hidden: !selecting))
         }
         .frame(height: 62)
-        .padding(.bottom, 2)
     }
 
     private func gridContent(shelf: LibraryTab) -> some View {
