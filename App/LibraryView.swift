@@ -7,6 +7,8 @@ import WallshaderModel
 struct LibraryView: View {
     enum Style { case grid, sidebar }
     let style: Style
+    /// Photos-style zoom into the detail screen (grid only).
+    var zoomNamespace: Namespace.ID? = nil
 
     @EnvironmentObject private var app: AppModel
     @ObservedObject private var library: WallpaperLibrary = AppModel.shared.library
@@ -21,6 +23,12 @@ struct LibraryView: View {
     @State private var shareURLs: [URL] = []
     @State private var showingShare = false
     @State private var preparingShare = false
+    // The + flow: a Shader/Photo choice sheet; Photo runs the sources
+    // sheet against a just-created document (deleted again if abandoned).
+    @State private var showingNewSheet = false
+    @State private var newPhotoModel: EditorModel?
+    @State private var showingPhotoSources = false
+    @State private var photoPicked = false
 
     /// The select bar's staged entrance: in after the + finished popping
     /// down, out fast. ONE transition on the container — per-child delayed
@@ -81,6 +89,16 @@ struct LibraryView: View {
             Button("Delete", role: .destructive) { bulkDelete() }
         }
         .sheet(isPresented: $showingShare) { ShareSheet(items: shareURLs) }
+        .sheet(isPresented: $showingNewSheet) {
+            NewWallpaperSheet(onShader: chooseShader, onPhoto: choosePhoto)
+        }
+        .sheet(isPresented: $showingPhotoSources, onDismiss: photoSourcesDismissed) {
+            if let model = newPhotoModel {
+                PhotoSourcesSheet(model: model,
+                                  onPicked: { photoPicked = true },
+                                  onImported: { openNewPhotoDocument() })
+            }
+        }
         .sheet(isPresented: $app.showingPaywall) { PaywallView() }
         .alert("Rename Wallpaper", isPresented: Binding(
             get: { renaming != nil },
@@ -113,10 +131,12 @@ struct LibraryView: View {
     }
 
     private var grid: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVGrid(columns: columns, spacing: Self.gridGap) {
                 ForEach(library.documents) { doc in
                     gridTile(doc)
+                        .id(doc.id)
                 }
                 .onMove(perform: move)
             }
@@ -140,7 +160,7 @@ struct LibraryView: View {
             // entering select mode, back with a delayed spring after the
             // bar left).
             Button {
-                newWallpaper()
+                showingNewSheet = true
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 24, weight: .semibold))
@@ -154,6 +174,14 @@ struct LibraryView: View {
             .padding(.bottom, 2)
         }
         .libraryBottomBar(visible: selecting, selectBar.transition(Self.stagedBar))
+        // While the detail pager swipes between wallpapers, keep the grid
+        // scrolled to the current one so the dismiss zoom has its tile on
+        // screen to land on (Photos behavior).
+        .onChange(of: app.selectedID) { _, id in
+            guard let id, !app.path.isEmpty else { return }
+            proxy.scrollTo(id, anchor: .center)
+        }
+        }
     }
 
     /// Photos' Library header, hand-built and PINNED: the big title +
@@ -258,6 +286,7 @@ struct LibraryView: View {
                 .accessibilityLabel(Text(doc.name))
         }
         .buttonStyle(.plain)
+        .zoomTransitionSource(id: doc.id, in: zoomNamespace)
         // ONE stable identity: branching tile vs tile.contextMenu swapped
         // the view identity on select-mode toggles, so every thumbnail got
         // removed+reinserted — the "all images flick" report. An empty
@@ -473,6 +502,49 @@ struct LibraryView: View {
         undoManager?.setActionName("New Wallpaper")
         app.open(doc.id)
     }
+
+    // MARK: - The + flow (Shader / Photo choice)
+
+    private func chooseShader() {
+        showingNewSheet = false
+        guard app.gateAddingDocument() else { return }
+        let doc = library.createBlank()
+        _ = library.assignKind(.procedural, to: doc.id)
+        undoManager?.registerUndo(withTarget: library) { lib in
+            lib.delete(doc.id)
+        }
+        undoManager?.setActionName("New Wallpaper")
+        app.open(doc.id)
+    }
+
+    private func choosePhoto() {
+        showingNewSheet = false
+        guard app.gateAddingDocument() else { return }
+        let doc = library.createBlank()
+        _ = library.assignKind(.imageBased, to: doc.id)
+        newPhotoModel = EditorModel(app: app, documentID: doc.id)
+        photoPicked = false
+        showingPhotoSources = true
+    }
+
+    /// The wallpaper only really exists once a photo landed: abandoning
+    /// the sources sheet deletes the placeholder again, silently.
+    private func photoSourcesDismissed() {
+        guard let model = newPhotoModel, !photoPicked else { return }
+        library.delete(model.documentID)
+        newPhotoModel = nil
+    }
+
+    private func openNewPhotoDocument() {
+        guard let model = newPhotoModel else { return }
+        let id = model.documentID
+        undoManager?.registerUndo(withTarget: library) { lib in
+            lib.delete(id)
+        }
+        undoManager?.setActionName("New Wallpaper")
+        newPhotoModel = nil
+        app.open(id)
+    }
 }
 
 /// Current-device variant thumbnails, rendered lazily on-device and cached
@@ -550,6 +622,56 @@ final class DeviceThumbnailStore: ObservableObject {
             }
         }
         return hit?.image
+    }
+}
+
+/// The + choice: the type-choice cards, sheet-sized.
+private struct NewWallpaperSheet: View {
+    let onShader: () -> Void
+    let onPhoto: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("New Wallpaper")
+                .font(.headline)
+                .padding(.top, 18)
+            HStack(spacing: 12) {
+                card(title: "Shader",
+                     subtitle: "A generated look \u{2014} gradients, noise, metaballs\u{2026}",
+                     systemImage: "circle.bottomrighthalf.pattern.checkered",
+                     action: onShader)
+                card(title: "Photo",
+                     subtitle: "Your own photo, styled by an effect.",
+                     systemImage: "photo",
+                     action: onPhoto)
+            }
+            .padding(.horizontal, 16)
+            Spacer(minLength: 0)
+        }
+        .presentationDetents([.height(250)])
+        .presentationDragIndicator(.visible)
+        .preferredColorScheme(.dark)
+    }
+
+    private func card(title: String, subtitle: String, systemImage: String,
+                      action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 30))
+                    .foregroundStyle(.white)
+                Text(title).font(.headline).foregroundStyle(.white)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+            .padding(.horizontal, 10)
+            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.08)))
+        }
+        .buttonStyle(.plain)
     }
 }
 

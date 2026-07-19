@@ -485,7 +485,8 @@ final class EditorModel: ObservableObject {
 
     // MARK: - Photo import
 
-    func importImage(url: URL, attribution: WallpaperDocument.Attribution? = nil) {
+    func importImage(url: URL, attribution: WallpaperDocument.Attribution? = nil,
+                     onDone: (() -> Void)? = nil) {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let prepared = try? await Task.detached(priority: .userInitiated) {
@@ -495,6 +496,7 @@ final class EditorModel: ObservableObject {
             _ = try? self.library.adoptPreparedSourceImage(prepared, into: self.documentID,
                                                            attribution: attribution)
             self.reloadEditor()
+            onDone?()
         }
     }
 }

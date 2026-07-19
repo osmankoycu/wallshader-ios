@@ -27,6 +27,25 @@ extension View {
         }
     }
 
+    /// Photos' tile→detail zoom pair (iOS 18+; a plain push before that).
+    @ViewBuilder
+    func zoomTransitionSource(id: some Hashable, in namespace: Namespace.ID?) -> some View {
+        if #available(iOS 18.0, *), let namespace {
+            matchedTransitionSource(id: id, in: namespace)
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder
+    func zoomTransition(sourceID: some Hashable, in namespace: Namespace.ID?) -> some View {
+        if #available(iOS 18.0, *), let namespace {
+            navigationTransition(.zoom(sourceID: sourceID, in: namespace))
+        } else {
+            self
+        }
+    }
+
     @ViewBuilder
     func chromeGlass(in shape: some Shape, tint: Color? = nil) -> some View {
         if #available(iOS 26.0, *) {

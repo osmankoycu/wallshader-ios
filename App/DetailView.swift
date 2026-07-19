@@ -13,6 +13,8 @@ struct DetailView: View {
     @Environment(\.undoManager) private var undoManager
 
     @State var currentID: UUID
+    /// Photos-style zoom back to the grid tile (nil on iPad's split view).
+    var zoomNamespace: Namespace.ID?
     @StateObject private var models = ModelCache()
     @State private var editing = false
     @State private var chromeHidden = false
@@ -22,8 +24,9 @@ struct DetailView: View {
     @State private var showingGuide = false
     @State private var saveError: String?
 
-    init(documentID: UUID) {
+    init(documentID: UUID, zoomNamespace: Namespace.ID? = nil) {
         _currentID = State(initialValue: documentID)
+        self.zoomNamespace = zoomNamespace
     }
 
     private func model(for id: UUID) -> EditorModel {
@@ -67,6 +70,13 @@ struct DetailView: View {
         .navigationBarHidden(true)
         .statusBarHidden(chromeHidden)
         .preferredColorScheme(.dark)
+        // The dismiss zoom targets whatever wallpaper is CURRENT — swiping
+        // in the pager retargets it, and the grid scrolls along behind
+        // (selectedID sync below) so the tile is on screen to land on.
+        .zoomTransition(sourceID: currentID, in: zoomNamespace)
+        .onChange(of: currentID) { _, id in
+            app.selectedID = id
+        }
         .fullScreenCover(isPresented: $editing) {
             EditView(model: currentModel)
         }

@@ -45,6 +45,8 @@ struct WallshaderIOSApp: App {
 /// iPad: a split view deliberately echoing the Mac Studio layout.
 struct RootView: View {
     @EnvironmentObject private var app: AppModel
+    /// Photos-style zoom between a grid tile and the detail screen.
+    @Namespace private var zoomNamespace
 
     var body: some View {
         if UIDevice.current.userInterfaceIdiom == .pad {
@@ -63,9 +65,9 @@ struct RootView: View {
             .sheet(isPresented: $app.showingOnboarding) { OnboardingView() }
         } else {
             NavigationStack(path: $app.path) {
-                LibraryView(style: .grid)
+                LibraryView(style: .grid, zoomNamespace: zoomNamespace)
                     .navigationDestination(for: UUID.self) { id in
-                        DetailView(documentID: id)
+                        DetailView(documentID: id, zoomNamespace: zoomNamespace)
                     }
             }
             .fullScreenCover(isPresented: $app.showingOnboarding) { OnboardingView() }

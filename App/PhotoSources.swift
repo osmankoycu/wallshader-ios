@@ -9,6 +9,11 @@ import WallshaderModel
 /// references. The macOS system-wallpapers gallery is Mac-only and omitted.
 struct PhotoSourcesSheet: View {
     @ObservedObject var model: EditorModel
+    /// Fired the moment a pick happens (before the async copy) and again
+    /// once the import landed — the + flow uses these to keep or discard
+    /// its freshly created document and to open it when ready.
+    var onPicked: (() -> Void)? = nil
+    var onImported: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var photoItem: PhotosPickerItem?
@@ -52,7 +57,8 @@ struct PhotoSourcesSheet: View {
                     let tmp = FileManager.default.temporaryDirectory
                         .appendingPathComponent("picked-\(UUID().uuidString)")
                     try? data.write(to: tmp)
-                    model.importImage(url: tmp)
+                    onPicked?()
+                    model.importImage(url: tmp, onDone: onImported)
                 }
                 photoItem = nil
                 dismiss()
@@ -61,12 +67,14 @@ struct PhotoSourcesSheet: View {
         .fileImporter(isPresented: $showingFiles,
                       allowedContentTypes: [.image]) { result in
             if case .success(let url) = result {
-                model.importImage(url: url)
+                onPicked?()
+                model.importImage(url: url, onDone: onImported)
             }
             dismiss()
         }
         .sheet(isPresented: $showingUnsplash) {
-            UnsplashSearchSheet(model: model) { dismiss() }
+            UnsplashSearchSheet(model: model, onPicked: onPicked,
+                                onImported: onImported) { dismiss() }
         }
     }
 }
@@ -76,6 +84,8 @@ struct PhotoSourcesSheet: View {
 /// download endpoint pinged when a photo is used.
 struct UnsplashSearchSheet: View {
     @ObservedObject var model: EditorModel
+    var onPicked: (() -> Void)? = nil
+    var onImported: (() -> Void)? = nil
     var onDone: () -> Void
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var network = NetworkMonitor.shared
@@ -162,7 +172,9 @@ struct UnsplashSearchSheet: View {
                 let px = Int(UIScreen.main.nativeBounds.height)
                 let url = try await UnsplashClient.shared.downloadForImport(
                     photo, targetPixelWidth: max(2556, px))
-                model.importImage(url: url, attribution: photo.attribution)
+                onPicked?()
+                model.importImage(url: url, attribution: photo.attribution,
+                                  onDone: onImported)
                 dismiss()
                 onDone()
             } catch {
