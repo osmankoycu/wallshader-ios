@@ -23,6 +23,12 @@ struct DetailView: View {
     @State private var confirmingDelete = false
     @State private var showingGuide = false
     @State private var saveError: String?
+    // Filmstrip scrubbing (iOS 18 scroll geometry): the strip is a
+    // center-locked scrubber — dragging it retargets the current
+    // wallpaper tick by tick; taps jump instantly.
+    @State private var stripScrubbing = false
+    @State private var stripBaseline: CGFloat?
+    @State private var stripTapJump = false
 
     init(documentID: UUID, zoomNamespace: Namespace.ID? = nil) {
         _currentID = State(initialValue: documentID)
@@ -40,24 +46,31 @@ struct DetailView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            // Full-bleed pager over the library (Photos-style swiping).
-            // TabView(.page) is EAGER: only the current page and its
-            // neighbors get a live Metal view — the rest stay black, or a
-            // detail view over a big library would spin up every photo
-            // texture at once.
-            TabView(selection: $currentID) {
-                ForEach(library.documents) { doc in
-                    Group {
-                        if isNeighbor(doc.id) {
-                            pagePreview(doc)
-                        } else {
-                            Color.black
+            // Full-bleed pager over the library. A paging ScrollView, not
+            // TabView(.page): pages slide side by side like Photos (the
+            // tab style eased pages in place, which read as a weird
+            // springy morph). Only the current page and its neighbors get
+            // a live Metal view — the rest stay black, or a detail view
+            // over a big library would spin up every photo texture at once.
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: 0) {
+                    ForEach(library.documents) { doc in
+                        Group {
+                            if isNeighbor(doc.id) {
+                                pagePreview(doc)
+                            } else {
+                                Color.black
+                            }
                         }
+                        .containerRelativeFrame([.horizontal, .vertical])
+                        .id(doc.id)
                     }
-                    .tag(doc.id)
                 }
+                .scrollTargetLayout()
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
+            .scrollTargetBehavior(.paging)
+            .scrollIndicators(.hidden)
+            .scrollPosition(id: pagePosition)
             .ignoresSafeArea()
             .onTapGesture {
                 withAnimation(.easeInOut(duration: 0.2)) { chromeHidden.toggle() }
@@ -112,6 +125,11 @@ struct DetailView: View {
         }
     }
 
+    /// scrollPosition wants an optional; currentID never is.
+    private var pagePosition: Binding<UUID?> {
+        Binding(get: { currentID }, set: { if let id = $0 { currentID = id } })
+    }
+
     private func isNeighbor(_ id: UUID) -> Bool {
         let docs = library.documents
         guard let current = docs.firstIndex(where: { $0.id == currentID }),
@@ -128,8 +146,9 @@ struct DetailView: View {
             PhotoDropZoneView(model: model)
         } else {
             PreviewMetalView(model: model.preview, mode: pageMode(doc))
-                .aspectRatio(model.selectedDevice.canonicalAspect, contentMode: .fit)
+                .aspectRatio(model.selectedDevice.canonicalAspect, contentMode: .fill)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
         }
     }
 
@@ -235,33 +254,91 @@ struct DetailView: View {
 
     // MARK: - Filmstrip (Photos-style neighbor strip)
 
+    /// Thumb geometry: constant width so the scrubber math is exact.
+    private static let stripThumbWidth: CGFloat = 28
+    private static let stripSpacing: CGFloat = 3
+    private static var stripStride: CGFloat { stripThumbWidth + stripSpacing }
+    private static let stripHaptic = UISelectionFeedbackGenerator()
+
     private var filmstrip: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 3) {
+                HStack(spacing: Self.stripSpacing) {
                     ForEach(library.documents) { doc in
                         filmstripThumb(doc)
                             .id(doc.id)
                     }
                 }
-                .padding(.horizontal, 4)
-                .frame(minWidth: UIScreen.main.bounds.width - 32) // centers short strips
+                .scrollTargetLayout()
             }
+            .scrollTargetBehavior(.viewAligned)
+            // Photos keeps the ACTIVE thumb dead center: half-screen side
+            // margins let even the first/last item reach the middle.
+            .contentMargins(.horizontal,
+                            UIScreen.main.bounds.width / 2 - Self.stripThumbWidth / 2,
+                            for: .scrollContent)
             .frame(height: 44)
+            // ...and the strip melts away at both ends.
+            .mask {
+                LinearGradient(stops: [.init(color: .clear, location: 0),
+                                       .init(color: .black, location: 0.12),
+                                       .init(color: .black, location: 0.88),
+                                       .init(color: .clear, location: 1)],
+                               startPoint: .leading, endPoint: .trailing)
+            }
+            .stripScrubber(midX: { handleStripGeometry($0) },
+                           phase: { interacting in
+                               stripScrubbing = interacting
+                           })
             .onChange(of: currentID) { _, id in
-                withAnimation(.easeOut(duration: 0.2)) {
+                guard !stripScrubbing else { return }
+                if stripTapJump {
+                    stripTapJump = false
                     proxy.scrollTo(id, anchor: .center)
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(id, anchor: .center)
+                    }
                 }
             }
             .onAppear { proxy.scrollTo(currentID, anchor: .center) }
         }
     }
 
+    /// Scrub tick: the thumb under the fixed center becomes current — the
+    /// page jumps with no slide, Photos-style. The first idle callback
+    /// calibrates the geometry baseline (inset conventions differ), then
+    /// center-x maps to an index by constant stride.
+    private func handleStripGeometry(_ midX: CGFloat) {
+        let docs = library.documents
+        guard !docs.isEmpty else { return }
+        if !stripScrubbing {
+            if let index = docs.firstIndex(where: { $0.id == currentID }) {
+                stripBaseline = midX - CGFloat(index) * Self.stripStride
+            }
+            return
+        }
+        guard let baseline = stripBaseline else { return }
+        let raw = Int(((midX - baseline) / Self.stripStride).rounded())
+        let index = min(max(raw, 0), docs.count - 1)
+        let id = docs[index].id
+        guard id != currentID else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { currentID = id }
+        Self.stripHaptic.selectionChanged()
+    }
+
     @ViewBuilder
     private func filmstripThumb(_ doc: WallpaperDocument) -> some View {
         let selected = doc.id == currentID
         Button {
-            withAnimation(.easeInOut(duration: 0.2)) { currentID = doc.id }
+            // Photos: a tap lands DIRECTLY on that wallpaper — no sliding
+            // through everything in between.
+            stripTapJump = true
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { currentID = doc.id }
         } label: {
             Group {
                 if let cg = DeviceThumbnailStore.shared.thumbnail(for: doc, app: app) {
@@ -272,7 +349,7 @@ struct DetailView: View {
                     Rectangle().fill(.white.opacity(0.1))
                 }
             }
-            .frame(width: selected ? 34 : 26, height: 44)
+            .frame(width: Self.stripThumbWidth, height: 44)
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay(RoundedRectangle(cornerRadius: 4)
                 .strokeBorder(.white.opacity(selected ? 0.9 : 0), lineWidth: 1.5))

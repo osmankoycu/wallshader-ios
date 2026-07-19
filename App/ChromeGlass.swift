@@ -46,6 +46,31 @@ extension View {
         }
     }
 
+    /// Filmstrip scrubber senses (iOS 18 scroll geometry/phase; inert
+    /// before that — the strip then behaves like a plain scroller).
+    @ViewBuilder
+    func stripScrubber(midX: @escaping (CGFloat) -> Void,
+                       phase: @escaping (Bool) -> Void) -> some View {
+        if #available(iOS 18.0, *) {
+            self
+                .onScrollGeometryChange(for: CGFloat.self) { geo in
+                    geo.visibleRect.midX
+                } action: { _, new in
+                    midX(new)
+                }
+                .onScrollPhaseChange { _, newPhase in
+                    switch newPhase {
+                    case .tracking, .interacting, .decelerating:
+                        phase(true)
+                    default:
+                        phase(false)
+                    }
+                }
+        } else {
+            self
+        }
+    }
+
     @ViewBuilder
     func chromeGlass(in shape: some Shape, tint: Color? = nil) -> some View {
         if #available(iOS 26.0, *) {
