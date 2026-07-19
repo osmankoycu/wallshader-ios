@@ -39,6 +39,10 @@ enum ScreensDriver {
             runAmbientTest(outDir: args[index + 1], app: app)
             return
         }
+        if args.contains("--gpu-probe") {
+            runGPUProbe(app: app)
+            return
+        }
         guard let index = args.firstIndex(of: "--screen"), index + 1 < args.count else { return }
         let screen = args[index + 1]
         Task { @MainActor in
@@ -60,6 +64,67 @@ enum ScreensDriver {
                 break // library / settings are reachable as-is
             }
         }
+    }
+
+    /// Field diagnosis: prints each GPU bring-up step to stdout so a
+    /// devicectl console launch shows exactly where a wedged device fails
+    /// (pipelines, an offscreen render with a watchdog on
+    /// waitUntilCompleted, texture upload). Exits when done.
+    private static func runGPUProbe(app: AppModel) {
+        func step(_ name: String, _ body: () -> String) {
+            print("gpu-probe: \(name) START")
+            let verdict = body()
+            print("gpu-probe: \(name) -> \(verdict)")
+        }
+        print("gpu-probe: begin")
+        guard let renderer = app.renderer else {
+            print("gpu-probe: renderer INIT FAILED")
+            exit(1)
+        }
+        print("gpu-probe: renderer ok, device=\(renderer.device.name)")
+        for shader in ["mesh-gradient", "grain-gradient", "voronoi", "water", "halftone-dots"] {
+            step("pipeline \(shader)") {
+                do {
+                    _ = try renderer.pipelineState(for: shader, pixelFormat: .bgra8Unorm)
+                    return "ok"
+                } catch {
+                    return "FAILED: \(error)"
+                }
+            }
+        }
+        let offscreen = OffscreenRenderer(renderer: renderer)
+        // Watchdog: if a render wedges in waitUntilCompleted, say so loudly
+        // instead of hanging silently.
+        let watchdog = DispatchSource.makeTimerSource(queue: .global())
+        watchdog.schedule(deadline: .now() + 6)
+        watchdog.setEventHandler { print("gpu-probe: WATCHDOG - render did not complete in 6s (GPU wedged)") }
+        watchdog.resume()
+        step("offscreen render mesh-gradient 200x200") {
+            guard let schema = ShaderRegistry.shared.schema(for: "mesh-gradient") else { return "no schema" }
+            do {
+                _ = try offscreen.renderImage(shaderId: "mesh-gradient",
+                                              params: ShaderParams(schema: schema),
+                                              pixelWidth: 200, pixelHeight: 200,
+                                              pixelRatio: 2, timeSeconds: 0)
+                return "ok"
+            } catch {
+                return "FAILED: \(error)"
+            }
+        }
+        step("texture load bundled photo") {
+            guard let url = Bundle.main.url(forResource: "test-image", withExtension: "jpg") else {
+                return "no bundled image"
+            }
+            do {
+                let texture = try renderer.loadTexture(url: url)
+                return "ok \(texture.width)x\(texture.height)"
+            } catch {
+                return "FAILED: \(error)"
+            }
+        }
+        watchdog.cancel()
+        print("gpu-probe: end")
+        exit(0)
     }
 
     /// End-to-end Live Photo save (the TCC-abort regression): renders the

@@ -155,6 +155,17 @@ schemes:
       config: Debug
       # Same local StoreKit testing mechanism as the Mac repo.
       storeKitConfiguration: Config/WallshaderStore.storekit
+      # Xcode's Metal diagnostics layer chokes our renderer on hardware
+      # (most tiles blank, detail hangs) while the SAME binary launched
+      # without Xcode runs perfectly — root-caused 2026-07-19 by installing
+      # a CLI build via devicectl. Release/production never runs with
+      # these layers; keep Xcode runs matching production.
+      enableGPUFrameCaptureMode: disabled
+      enableGPUValidationMode: disabled
+      # The debugger attach is part of the same choking environment; Run
+      # now installs-and-launches exactly like production. Flip back to
+      # true when a breakpoint session is actually needed (task #39).
+      debugEnabled: false
     test:
       config: Debug
       targets:
