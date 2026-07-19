@@ -39,6 +39,14 @@ render-test: build
 	cp "$$(xcrun simctl get_app_container $(SIM_ID) $(BUNDLE) data)/Documents/render-test/"*.png build/render-test/
 	python3 Tools/compare-renders.py Reference/ios build/render-test
 
+# Functional ambient sweep (mirrors the Mac's `make ambient-test`): the
+# hook exits 0/1 on its own behavioral assertions — no goldens to maintain.
+ambient-test: build
+	xcrun simctl boot $(SIM_ID) 2>/dev/null || true
+	xcrun simctl install $(SIM_ID) $(APP)
+	xcrun simctl terminate $(SIM_ID) $(BUNDLE) 2>/dev/null || true
+	xcrun simctl launch --console-pty $(SIM_ID) $(BUNDLE) --suppress-onboarding --ambient-test-ios ambient-test | tee /dev/stderr | grep -q "ambient-test-ios: PASS"
+
 run: build
 	xcrun simctl boot $(SIM_ID) 2>/dev/null || true
 	xcrun simctl install $(SIM_ID) $(APP)

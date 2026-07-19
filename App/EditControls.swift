@@ -203,11 +203,46 @@ enum EditControls {
                         - AmbientSettings.automatic[keyPath: keyPath]) > 0.0001
                 })
         }
+        // Toggle + shape commit straight through setAmbient (single undo
+        // step each, like B&W); any live scrub draft is committed first so
+        // it can't be lost or resurrect stale knobs.
+        let enabledToggle = EditControl(
+            id: "amb.enabled", title: "Ambient", systemImage: "circle.lefthalf.striped.horizontal",
+            kind: .toggle(
+                get: { model.currentAmbient.enabled },
+                set: { value in
+                    model.commitDraftAmbient()
+                    var next = model.currentAmbient
+                    next.enabled = value
+                    model.setAmbient(next)
+                }),
+            isModified: { !model.currentAmbient.enabled })
+        let shapeNames: [(AmbientSettings.MaskShape, String)] = [
+            (.rectangle, "Rectangle"), (.roundedRectangle, "Rounded"),
+            (.ellipse, "Ellipse"), (.circle, "Circle"),
+        ]
+        let shapePicker = EditControl(
+            id: "amb.shape", title: "Shape", systemImage: "squareshape.dashed.squareshape",
+            kind: .options(
+                all: shapeNames.map(\.1),
+                get: {
+                    shapeNames.first { $0.0 == model.currentAmbient.maskShape }?.1 ?? "Rectangle"
+                },
+                set: { name in
+                    guard let shape = shapeNames.first(where: { $0.1 == name })?.0 else { return }
+                    model.commitDraftAmbient()
+                    var next = model.currentAmbient
+                    next.maskShape = shape
+                    model.setAmbient(next)
+                }),
+            isModified: { model.currentAmbient.maskShape != .rectangle })
         return [
+            enabledToggle,
             slider("amb.softness", "Edge Soft", "square.on.square.squareshape.controlhandles",
                    \.edgeSoftness),
             slider("amb.blur", "Backdrop", "aqi.medium", \.backdropBlur),
             slider("amb.brightness", "Ambience", "sun.min", \.backdropBrightness),
+            shapePicker,
         ]
     }
 }
