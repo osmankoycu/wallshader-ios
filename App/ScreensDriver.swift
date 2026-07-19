@@ -30,6 +30,10 @@ enum ScreensDriver {
             runRenderTest(outDir: args[index + 1], app: app)
             return
         }
+        if args.contains("--save-live-test") {
+            runSaveLiveTest(app: app)
+            return
+        }
         guard let index = args.firstIndex(of: "--screen"), index + 1 < args.count else { return }
         let screen = args[index + 1]
         Task { @MainActor in
@@ -49,6 +53,30 @@ enum ScreensDriver {
                 app.showingOnboarding = true
             default:
                 break // library / settings are reachable as-is
+            }
+        }
+    }
+
+    /// End-to-end Live Photo save (the TCC-abort regression): renders the
+    /// first animatable wallpaper, assembles + saves the pair, exits 0/1.
+    /// Needs photos-add granted (`simctl privacy grant photos-add`). The
+    /// simulator enforces usage-description aborts like hardware, so a
+    /// library READ sneaking back into the save path fails this run.
+    private static func runSaveLiveTest(app: AppModel) {
+        Task { @MainActor in
+            guard let doc = app.library.documents.first(where: { $0.shaderIsAnimatable && $0.isAppliable }) else {
+                print("save-live-test: no animatable wallpaper")
+                exit(1)
+            }
+            let model = EditorModel(app: app, documentID: doc.id)
+            model.setAnimated(true)
+            do {
+                try await LivePhotoExporter.saveLiveWallpaper(model: model)
+                print("save-live-test: PASS")
+                exit(0)
+            } catch {
+                print("save-live-test: FAIL \(error)")
+                exit(1)
             }
         }
     }
