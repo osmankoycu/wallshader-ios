@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import WallshaderModel
 
@@ -23,12 +24,27 @@ struct LibraryView: View {
     @State private var shareURLs: [URL] = []
     @State private var showingShare = false
     @State private var preparingShare = false
-    // The + flow: a Shader/Photo choice sheet; Photo runs the sources
-    // sheet against a just-created document (deleted again if abandoned).
+    // The + flow: a compact Shader/Photo sheet. The document is created in
+    // the BACKGROUND and the edit screen opens directly; Done returns to
+    // the grid, Cancel discards the document again. Actions run on the
+    // sheet's onDismiss (presenting a cover mid-dismissal misfires).
+    private enum PendingNewAction { case shader, photo(URL) }
+    private struct EditSession: Identifiable {
+        let id: UUID
+        let model: EditorModel
+    }
     @State private var showingNewSheet = false
-    @State private var newPhotoModel: EditorModel?
-    @State private var showingPhotoSources = false
-    @State private var photoPicked = false
+    @State private var pendingNewAction: PendingNewAction?
+    @State private var editSession: EditSession?
+    /// The freshly created document stays OUT of the grid while its edit
+    /// session runs — it appears when you come back with Done (no tile
+    /// flashing in behind the opening cover).
+    @State private var hiddenNewDocID: UUID?
+
+    private var visibleDocuments: [WallpaperDocument] {
+        guard let hiddenNewDocID else { return library.documents }
+        return library.documents.filter { $0.id != hiddenNewDocID }
+    }
 
     /// The select bar's staged entrance: in after the + finished popping
     /// down, out fast. ONE transition on the container — per-child delayed
@@ -89,15 +105,18 @@ struct LibraryView: View {
             Button("Delete", role: .destructive) { bulkDelete() }
         }
         .sheet(isPresented: $showingShare) { ShareSheet(items: shareURLs) }
-        .sheet(isPresented: $showingNewSheet) {
-            NewWallpaperSheet(onShader: chooseShader, onPhoto: choosePhoto)
+        .sheet(isPresented: $showingNewSheet, onDismiss: runPendingNewAction) {
+            NewWallpaperSheet(
+                onShader: { pendingNewAction = .shader; showingNewSheet = false },
+                onPhotoPicked: { url in
+                    pendingNewAction = .photo(url)
+                    showingNewSheet = false
+                })
         }
-        .sheet(isPresented: $showingPhotoSources, onDismiss: photoSourcesDismissed) {
-            if let model = newPhotoModel {
-                PhotoSourcesSheet(model: model,
-                                  onPicked: { photoPicked = true },
-                                  onImported: { openNewPhotoDocument() })
-            }
+        .fullScreenCover(item: $editSession, onDismiss: { hiddenNewDocID = nil }) { session in
+            EditView(model: session.model, onCancel: {
+                library.delete(session.model.documentID)
+            })
         }
         .sheet(isPresented: $app.showingPaywall) { PaywallView() }
         .alert("Rename Wallpaper", isPresented: Binding(
@@ -134,12 +153,19 @@ struct LibraryView: View {
         ScrollViewReader { proxy in
         ScrollView {
             LazyVGrid(columns: columns, spacing: Self.gridGap) {
-                ForEach(library.documents) { doc in
+                ForEach(visibleDocuments) { doc in
                     gridTile(doc)
                         .id(doc.id)
+                        .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
                 .onMove(perform: move)
             }
+            // Photos-style reflow: inserts pop in, deletes let the
+            // neighbors spring into place. Keyed to the ID LIST so only
+            // membership/order changes animate (select-mode toggles and
+            // thumbnail refreshes don't).
+            .animation(.spring(response: 0.4, dampingFraction: 0.85),
+                       value: visibleDocuments.map(\.id))
             .padding(.horizontal, Self.gridGap * 1.5)
             .padding(.top, 2)
             // The grid draws under the home indicator (ignored safe area),
@@ -194,8 +220,8 @@ struct LibraryView: View {
                 Text("Wallshader")
                     .font(.largeTitle.weight(.bold))
                     .foregroundStyle(.white)
-                Text(library.documents.count == 1 ? "1 Wallpaper"
-                     : "\(library.documents.count) Wallpapers")
+                Text(visibleDocuments.count == 1 ? "1 Wallpaper"
+                     : "\(visibleDocuments.count) Wallpapers")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -505,45 +531,35 @@ struct LibraryView: View {
 
     // MARK: - The + flow (Shader / Photo choice)
 
-    private func chooseShader() {
-        showingNewSheet = false
+    private func runPendingNewAction() {
+        guard let action = pendingNewAction else { return }
+        pendingNewAction = nil
         guard app.gateAddingDocument() else { return }
-        let doc = library.createBlank()
-        _ = library.assignKind(.procedural, to: doc.id)
-        undoManager?.registerUndo(withTarget: library) { lib in
-            lib.delete(doc.id)
+        switch action {
+        case .shader:
+            let doc = library.createBlank()
+            _ = library.assignKind(.procedural, to: doc.id)
+            hiddenNewDocID = doc.id
+            registerCreationUndo(doc.id)
+            editSession = EditSession(id: doc.id,
+                                      model: EditorModel(app: app, documentID: doc.id))
+        case .photo(let url):
+            let doc = library.createBlank()
+            _ = library.assignKind(.imageBased, to: doc.id)
+            hiddenNewDocID = doc.id
+            registerCreationUndo(doc.id)
+            let model = EditorModel(app: app, documentID: doc.id)
+            model.importImage(url: url) { [self] in
+                editSession = EditSession(id: doc.id, model: model)
+            }
         }
-        undoManager?.setActionName("New Wallpaper")
-        app.open(doc.id)
     }
 
-    private func choosePhoto() {
-        showingNewSheet = false
-        guard app.gateAddingDocument() else { return }
-        let doc = library.createBlank()
-        _ = library.assignKind(.imageBased, to: doc.id)
-        newPhotoModel = EditorModel(app: app, documentID: doc.id)
-        photoPicked = false
-        showingPhotoSources = true
-    }
-
-    /// The wallpaper only really exists once a photo landed: abandoning
-    /// the sources sheet deletes the placeholder again, silently.
-    private func photoSourcesDismissed() {
-        guard let model = newPhotoModel, !photoPicked else { return }
-        library.delete(model.documentID)
-        newPhotoModel = nil
-    }
-
-    private func openNewPhotoDocument() {
-        guard let model = newPhotoModel else { return }
-        let id = model.documentID
+    private func registerCreationUndo(_ id: UUID) {
         undoManager?.registerUndo(withTarget: library) { lib in
             lib.delete(id)
         }
         undoManager?.setActionName("New Wallpaper")
-        newPhotoModel = nil
-        app.open(id)
     }
 }
 
@@ -625,32 +641,84 @@ final class DeviceThumbnailStore: ObservableObject {
     }
 }
 
-/// The + choice: the type-choice cards, sheet-sized.
+/// The + choice, compact and two-step: Shader/Photo cards first; Photo
+/// swaps the SAME small sheet to the source rows (Photo Library opens the
+/// system picker directly) instead of a tall list sheet.
 private struct NewWallpaperSheet: View {
     let onShader: () -> Void
-    let onPhoto: () -> Void
+    let onPhotoPicked: (URL) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var choosingPhotoSource = false
+    @State private var photoItem: PhotosPickerItem?
+    @State private var showingFiles = false
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("New Wallpaper")
+            Text(choosingPhotoSource ? "Add Photo" : "New Wallpaper")
                 .font(.headline)
                 .padding(.top, 18)
-            HStack(spacing: 12) {
-                card(title: "Shader",
-                     subtitle: "A generated look \u{2014} gradients, noise, metaballs\u{2026}",
-                     systemImage: "circle.bottomrighthalf.pattern.checkered",
-                     action: onShader)
-                card(title: "Photo",
-                     subtitle: "Your own photo, styled by an effect.",
-                     systemImage: "photo",
-                     action: onPhoto)
+            if choosingPhotoSource {
+                VStack(spacing: 10) {
+                    PhotosPicker(selection: $photoItem, matching: .images) {
+                        sourceRow("Photo Library", systemImage: "photo.on.rectangle")
+                    }
+                    Button {
+                        showingFiles = true
+                    } label: {
+                        sourceRow("Files", systemImage: "folder")
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+            } else {
+                HStack(spacing: 12) {
+                    card(title: "Shader",
+                         subtitle: "A generated look: gradients, noise, metaballs and more.",
+                         systemImage: "circle.bottomrighthalf.pattern.checkered",
+                         action: onShader)
+                    card(title: "Photo",
+                         subtitle: "Your own photo, styled by a shader.",
+                         systemImage: "photo",
+                         action: { withAnimation(.easeInOut(duration: 0.15)) { choosingPhotoSource = true } })
+                }
+                .frame(height: 150)
+                .padding(.horizontal, 16)
             }
-            .padding(.horizontal, 16)
             Spacer(minLength: 0)
         }
         .presentationDetents([.height(250)])
         .presentationDragIndicator(.visible)
         .preferredColorScheme(.dark)
+        .onChange(of: photoItem) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self) {
+                    let tmp = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("picked-\(UUID().uuidString)")
+                    try? data.write(to: tmp)
+                    onPhotoPicked(tmp)
+                }
+                photoItem = nil
+            }
+        }
+        .fileImporter(isPresented: $showingFiles, allowedContentTypes: [.image]) { result in
+            if case .success(let url) = result {
+                onPhotoPicked(url)
+            }
+        }
+    }
+
+    private func sourceRow(_ title: String, systemImage: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .frame(width: 28)
+            Text(title)
+            Spacer()
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.08)))
     }
 
     private func card(title: String, subtitle: String, systemImage: String,
@@ -666,8 +734,7 @@ private struct NewWallpaperSheet: View {
                     .foregroundStyle(.white.opacity(0.55))
                     .multilineTextAlignment(.center)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, 10)
             .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.08)))
         }

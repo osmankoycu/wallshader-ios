@@ -10,6 +10,9 @@ import WallshaderModel
 /// sub-control row, and the main-category tab pill.
 struct EditView: View {
     @ObservedObject var model: EditorModel
+    /// Creation flow (+ sheet): Cancel discards the freshly created
+    /// wallpaper instead of restoring an entry snapshot.
+    var onCancel: (() -> Void)? = nil
     @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.undoManager) private var undoManager
@@ -154,6 +157,11 @@ struct EditView: View {
     }
 
     private func cancel() {
+        if let onCancel {
+            onCancel()
+            dismiss()
+            return
+        }
         // Restore the state the session opened with (Photos semantics) —
         // one library write, no modifiedAt churn beyond the restore itself.
         if let snapshot = entrySnapshot {
