@@ -17,22 +17,9 @@ struct LibraryView: View {
     @Environment(\.undoManager) private var undoManager
     @State private var renaming: WallpaperDocument?
     @State private var renameText = ""
-    /// The home's two shelves (Photos' Library/Collections pill) plus the
-    /// system tab bar's detached action circle (+, search-role slot).
-    enum LibraryTab: Hashable { case all, favorites, new }
+    /// The home's two shelves (Photos' Library/Collections pill).
+    enum LibraryTab: Hashable { case all, favorites }
     @State private var tab: LibraryTab = .all
-
-    /// Intercepts the + pseudo-tab: it opens the creation sheet and the
-    /// selection snaps back instead of switching content.
-    private var tabSelection: Binding<LibraryTab> {
-        Binding(get: { tab }, set: { next in
-            if next == .new {
-                showingNewSheet = true
-            } else {
-                tab = next
-            }
-        })
-    }
     // Photos-style select mode (grid only): bulk share + bulk delete.
     @State private var selecting = false
     @State private var selected: Set<UUID> = []
@@ -56,12 +43,15 @@ struct LibraryView: View {
     /// flashing in behind the opening cover).
     @State private var hiddenNewDocID: UUID?
 
-    private var visibleDocuments: [WallpaperDocument] {
+    /// Each tab instance filters for ITS OWN shelf — filtering off the
+    /// shared selection made the outgoing tab's grid reflow (animated!)
+    /// mid-switch, which read as the whole grid sliding away.
+    private func documents(for shelf: LibraryTab) -> [WallpaperDocument] {
         var docs = library.documents
         if let hiddenNewDocID {
             docs = docs.filter { $0.id != hiddenNewDocID }
         }
-        if tab == .favorites {
+        if shelf == .favorites {
             docs = docs.filter { $0.favorite == true }
         }
         return docs
@@ -167,30 +157,57 @@ struct LibraryView: View {
     }
 
     private var grid: some View {
-        Group {
-            if #available(iOS 18.0, *) {
-                TabView(selection: tabSelection) {
-                    Tab("All", systemImage: "circle.bottomrighthalf.pattern.checkered",
-                        value: LibraryTab.all) {
-                        gridContent(customChrome: false)
-                    }
-                    Tab("Favorites", systemImage: "heart", value: .favorites) {
-                        gridContent(customChrome: false)
-                    }
-                    Tab("New", systemImage: "plus", value: .new, role: .search) {
-                        gridContent(customChrome: false)
-                    }
-                }
-            } else {
-                gridContent(customChrome: true)
-            }
+        // Hand-built Photos layout: the shelf pill LEFT, the + circle
+        // RIGHT. The system TabView couldn't give this without a
+        // search-role tab (whose lazy first build flashed a foreign grid),
+        // and its 2-tab pill centers. Both shelves stay ALIVE and swap by
+        // opacity, so switching can't reflow or slide anything.
+        ZStack {
+            gridContent(shelf: .all)
+                .opacity(tab == .all ? 1 : 0)
+                .allowsHitTesting(tab == .all)
+            gridContent(shelf: .favorites)
+                .opacity(tab == .favorites ? 1 : 0)
+                .allowsHitTesting(tab == .favorites)
         }
+        .libraryBottomBar(visible: true, bottomBar)
     }
 
-    private func gridContent(customChrome: Bool) -> some View {
-        ScrollViewReader { proxy in
+    /// ONE bottom bar, a REAL safeAreaBar like the pinned header: the
+    /// system draws its progressive blur behind it and seats it at the
+    /// default bar position over the home indicator. Browse chrome (pill +
+    /// plus) and the select controls swap in place.
+    private var bottomBar: some View {
+        ZStack {
+            HStack(alignment: .center) {
+                tabPill
+                    .modifier(ChromeSwap(hidden: selecting))
+                Spacer()
+                Button {
+                    showingNewSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 60, height: 60)
+                        .chromeGlass(in: Circle(), tint: .accentColor)
+                }
+                .accessibilityLabel("New Wallpaper")
+                .modifier(ChromeSwap(hidden: selecting))
+            }
+            .padding(.horizontal, 20)
+
+            selectBar
+                .modifier(ChromeSwap(hidden: !selecting))
+        }
+        .padding(.bottom, 2)
+    }
+
+    private func gridContent(shelf: LibraryTab) -> some View {
+        let docs = documents(for: shelf)
+        return ScrollViewReader { proxy in
         ScrollView {
-            if tab == .favorites && visibleDocuments.isEmpty {
+            if shelf == .favorites && docs.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "heart")
                         .font(.system(size: 40))
@@ -208,7 +225,7 @@ struct LibraryView: View {
                 .padding(.top, 180)
             }
             LazyVGrid(columns: columns, spacing: Self.gridGap) {
-                ForEach(visibleDocuments) { doc in
+                ForEach(docs) { doc in
                     gridTile(doc)
                         .id(doc.id)
                         .transition(.scale(scale: 0.85).combined(with: .opacity))
@@ -220,7 +237,7 @@ struct LibraryView: View {
             // membership/order changes animate (select-mode toggles and
             // thumbnail refreshes don't).
             .animation(.spring(response: 0.4, dampingFraction: 0.85),
-                       value: visibleDocuments.map(\.id))
+                       value: docs.map(\.id))
             .padding(.horizontal, Self.gridGap * 1.5)
             .padding(.top, 2)
             // The grid draws under the home indicator (ignored safe area),
@@ -234,34 +251,7 @@ struct LibraryView: View {
         .background(Color(white: 0.06))
         .preferredColorScheme(.dark)
         .toolbar(.hidden, for: .navigationBar)
-        .toolbar(selecting ? .hidden : .automatic, for: .tabBar)
-        .libraryHeaderBar(header)
-        .overlay(alignment: .bottomLeading) {
-            if customChrome {
-                tabPill
-                    .modifier(ChromeSwap(hidden: selecting))
-                    .padding(.leading, 20)
-                    .padding(.bottom, 2)
-            }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if customChrome {
-                Button {
-                    showingNewSheet = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 60, height: 60)
-                        .chromeGlass(in: Circle(), tint: .accentColor)
-                }
-                .accessibilityLabel("New Wallpaper")
-                .modifier(ChromeSwap(hidden: selecting))
-                .padding(.trailing, 20)
-                .padding(.bottom, 2)
-            }
-        }
-        .libraryBottomBar(visible: selecting, selectBar.transition(Self.stagedBar))
+        .libraryHeaderBar(header(for: shelf))
         // While the detail pager swipes between wallpapers, keep the grid
         // scrolled to the current one so the dismiss zoom has its tile on
         // screen to land on (Photos behavior).
@@ -276,14 +266,14 @@ struct LibraryView: View {
     /// count at left, the two circle buttons on the same line at right,
     /// the grid scrolling underneath a top scrim. (The system nav bar
     /// can't align its items with a large title, hence custom.)
-    private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
+    private func header(for shelf: LibraryTab) -> some View {
+        let count = documents(for: shelf).count
+        return HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(tab == .favorites ? "Favorites" : "Wallshader")
+                Text(shelf == .favorites ? "Favorites" : "Wallshader")
                     .font(.largeTitle.weight(.bold))
                     .foregroundStyle(.white)
-                Text(visibleDocuments.count == 1 ? "1 Wallpaper"
-                     : "\(visibleDocuments.count) Wallpapers")
+                Text(count == 1 ? "1 Wallpaper" : "\(count) Wallpapers")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -570,22 +560,24 @@ struct LibraryView: View {
                            systemImage: String) -> some View {
         let selected = tab == target
         return Button {
-            withAnimation(.easeInOut(duration: 0.15)) { tab = target }
+            tab = target
         } label: {
             VStack(spacing: 3) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 22, weight: .medium))
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12))
             }
             .foregroundStyle(selected ? Color.accentColor : .white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 7)
+            // Equal, generous segments — unequal intrinsic widths made the
+            // first pill feel untappable at the edges.
+            .frame(width: 88, height: 56)
             .background {
                 if selected {
                     Capsule().fill(.white.opacity(0.14))
                 }
             }
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text(title))
