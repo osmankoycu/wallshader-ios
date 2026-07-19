@@ -418,17 +418,6 @@ struct DetailView: View {
             Spacer()
 
             HStack(spacing: 26) {
-                if currentDocument?.shaderIsAnimatable == true {
-                    Button {
-                        currentModel.setAnimated(!(currentModel.editingVariant?.animated ?? false))
-                    } label: {
-                        Image(systemName: (currentModel.editingVariant?.animated ?? false)
-                              ? "pause.circle" : "play.circle")
-                            .font(.system(size: 20, weight: .semibold))
-                    }
-                    .accessibilityLabel("Animated")
-                }
-
                 SaveWallpaperButton(model: currentModel, showingGuide: $showingGuide,
                                     saveError: $saveError)
 
@@ -444,7 +433,7 @@ struct DetailView: View {
                 .accessibilityLabel("Edit")
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 26)
+            .padding(.horizontal, 20)
             .padding(.vertical, 12)
             .chromeGlass(in: Capsule())
 
