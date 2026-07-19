@@ -20,7 +20,6 @@ struct LibraryView: View {
     // Photos-style select mode (grid only): bulk share + bulk delete.
     @State private var selecting = false
     @State private var selected: Set<UUID> = []
-    @State private var confirmingBulkDelete = false
     @State private var shareURLs: [URL] = []
     @State private var showingShare = false
     @State private var preparingShare = false
@@ -99,10 +98,6 @@ struct LibraryView: View {
                     }
                 }
             }
-        }
-        .confirmationDialog("Delete \(selected.count) wallpapers?",
-                            isPresented: $confirmingBulkDelete, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { bulkDelete() }
         }
         .sheet(isPresented: $showingShare) { ShareSheet(items: shareURLs) }
         .sheet(isPresented: $showingNewSheet, onDismiss: runPendingNewAction) {
@@ -352,11 +347,23 @@ struct LibraryView: View {
 
             Spacer()
 
-            Button {
-                confirmingBulkDelete = true
+            Menu {
+                Section {
+                    Button(role: .destructive) {
+                        bulkDelete()
+                    } label: {
+                        Label(selected.count == 1 ? "Delete Wallpaper"
+                              : "Delete \(selected.count) Wallpapers",
+                              systemImage: "trash")
+                    }
+                } header: {
+                    Text(selected.count == 1
+                         ? "This wallpaper will be deleted from your library."
+                         : "These wallpapers will be deleted from your library.")
+                }
             } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 17))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
                     .chromeGlass(in: Circle())

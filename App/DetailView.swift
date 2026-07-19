@@ -20,7 +20,6 @@ struct DetailView: View {
     @State private var chromeHidden = false
     @State private var renaming = false
     @State private var renameText = ""
-    @State private var confirmingDelete = false
     @State private var showingGuide = false
     @State private var saveError: String?
     /// The pager's scroll position. A real state, NOT a computed binding
@@ -140,10 +139,6 @@ struct DetailView: View {
         } message: {
             Text(saveError ?? "")
         }
-        .confirmationDialog("Delete this wallpaper?", isPresented: $confirmingDelete,
-                            titleVisibility: .visible) {
-            Button("Delete Wallpaper", role: .destructive) { deleteCurrent() }
-        }
         .task {
             // Screenshot automation (make screens): jump straight into edit.
             if CommandLine.arguments.contains("--auto-edit") {
@@ -250,12 +245,6 @@ struct DetailView: View {
 
             Menu {
                 Button {
-                    showingSizeSheet = true
-                } label: {
-                    Label("Export at a Different Size", systemImage: "square.and.arrow.up.on.square")
-                }
-                Divider()
-                Button {
                     renameText = currentDocument?.name ?? ""
                     renaming = true
                 } label: { Label("Rename", systemImage: "pencil") }
@@ -269,8 +258,20 @@ struct DetailView: View {
                     } label: { Label("Revert to Automatic", systemImage: "wand.and.sparkles") }
                 }
                 Divider()
+                Button {
+                    showingSizeSheet = true
+                } label: {
+                    Label("Export at a Different Size", systemImage: "square.and.arrow.up.on.square")
+                }
+                Button {
+                    exportWallshader()
+                } label: {
+                    Label("Export as", systemImage: "doc.badge.arrow.up")
+                    Text("Wallshader")
+                }
+                Divider()
                 Button(role: .destructive) {
-                    confirmingDelete = true
+                    deleteCurrent()
                 } label: { Label("Delete", systemImage: "trash") }
             } label: {
                 Image(systemName: "ellipsis")
@@ -443,7 +444,24 @@ struct DetailView: View {
 
             Spacer()
 
-            pillButton(systemImage: "trash", label: "Delete") { confirmingDelete = true }
+            // The delete button MORPHS into its confirmation, exactly like
+            // the More button morphs into its menu (Photos' delete panel).
+            Menu {
+                Section {
+                    Button(role: .destructive) {
+                        deleteCurrent()
+                    } label: { Label("Delete Wallpaper", systemImage: "trash") }
+                } header: {
+                    Text("This wallpaper will be deleted from your library.")
+                }
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .chromeGlass(in: Circle())
+            }
+            .accessibilityLabel("Delete")
         }
     }
 
@@ -469,6 +487,38 @@ struct DetailView: View {
             .first?
             .presentedOrSelf
             .present(controller, animated: true)
+    }
+
+    /// The portable .wallshader file (recipe + embedded photo) through
+    /// the system share sheet — same format the Mac exports and imports.
+    private func exportWallshader() {
+        guard let doc = currentDocument else { return }
+        currentModel.flushPendingWriteback()
+        guard let fresh = library.document(id: currentID),
+              let data = try? library.exportWallshaderData(for: fresh) else {
+            saveError = "This wallpaper isn't finished yet, so it can't be exported."
+            return
+        }
+        let name = fresh.name.components(separatedBy: CharacterSet(charactersIn: "/:\\"))
+            .joined(separator: "-")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wallshader-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(name).appendingPathExtension("wallshader")
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try data.write(to: url)
+        } catch {
+            saveError = error.localizedDescription
+            return
+        }
+        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow?.rootViewController }
+            .first?
+            .presentedOrSelf
+            .present(controller, animated: true)
+        _ = doc
     }
 
     private func duplicateCurrent() {
