@@ -59,7 +59,7 @@ struct DetailView: View {
             // a live Metal view — the rest stay black, or a detail view
             // over a big library would spin up every photo texture at once.
             ScrollView(.horizontal) {
-                LazyHStack(spacing: 0) {
+                LazyHStack(spacing: 24) {
                     ForEach(library.documents) { doc in
                         Group {
                             if isNeighbor(doc.id) {
@@ -74,7 +74,10 @@ struct DetailView: View {
                 }
                 .scrollTargetLayout()
             }
-            .scrollTargetBehavior(.paging)
+            // viewAligned (one page per swipe), not .paging: paging
+            // strides by container width, so a gutter between pages would
+            // accumulate misalignment page after page.
+            .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
             .scrollIndicators(.hidden)
             .scrollPosition(id: $pagerID)
             .ignoresSafeArea()
