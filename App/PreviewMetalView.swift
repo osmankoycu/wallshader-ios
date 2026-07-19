@@ -208,7 +208,11 @@ final class PreviewModel: ObservableObject {
     @Published var params: ShaderParams
     @Published var isPlaying = false
     @Published var texture: MTLTexture?
-    var ambient: AmbientRenderSpec?
+    /// @Published is load-bearing: params/texture changes repaint the still
+    /// preview through this model's publisher — ambient must too, or edits
+    /// from the Adjust tab sit invisible until an unrelated layout change
+    /// (the Mac hit the same hole; its preview publishes ambient as well).
+    @Published var ambient: AmbientRenderSpec?
     /// The selected variant's canonical device pixels (miniature target).
     var emulatedPixels: (pixels: SIMD2<Float>, pixelRatio: Float)
 
