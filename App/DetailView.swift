@@ -68,7 +68,12 @@ struct DetailView: View {
                                 Color.black
                             }
                         }
-                        .containerRelativeFrame([.horizontal, .vertical])
+                        // Fixed to the SCREEN, not the container: the
+                        // status bar toggling with the chrome shifts the
+                        // safe area, and container-relative pages rescaled
+                        // visibly with it. Screen points never move.
+                        .frame(width: UIScreen.main.bounds.width,
+                               height: UIScreen.main.bounds.height)
                         .id(doc.id)
                     }
                 }
@@ -84,13 +89,21 @@ struct DetailView: View {
             .onTapGesture {
                 withAnimation(.easeInOut(duration: 0.2)) { chromeHidden.toggle() }
             }
-
+        }
+        // The chrome lives in an OVERLAY, not as a ZStack sibling: layout
+        // siblings re-lay the whole container on every show/hide, and the
+        // pager's realignment drifted a couple of pixels each toggle.
+        // Overlays never touch the base layout.
+        .overlay {
             if !chromeHidden {
                 chrome
             }
         }
         .navigationBarHidden(true)
-        .statusBarHidden(chromeHidden)
+        // ALWAYS hidden, not tied to the chrome: toggling the status bar
+        // re-runs layout and nudged the pager a pixel or two sideways —
+        // the wallpaper must be rock still when the chrome fades.
+        .statusBarHidden(true)
         .preferredColorScheme(.dark)
         // The dismiss zoom targets whatever wallpaper is CURRENT — swiping
         // in the pager retargets it, and the grid scrolls along behind
@@ -251,12 +264,6 @@ struct DetailView: View {
                 Button {
                     duplicateCurrent()
                 } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
-                if currentModel.selectedVariantIsCustomized,
-                   currentModel.selectedDevice != .desktop {
-                    Button {
-                        currentModel.revertVariantToAutomatic()
-                    } label: { Label("Revert to Automatic", systemImage: "wand.and.sparkles") }
-                }
                 Divider()
                 Button {
                     showingSizeSheet = true
@@ -284,12 +291,11 @@ struct DetailView: View {
         }
     }
 
+    /// The wallpaper's shader, human-named — device/customization state
+    /// stopped meaning anything once mobile lost variant switching.
     private var subtitle: String {
-        guard let doc = currentDocument else { return "" }
-        let device = currentModel.selectedDevice.categoryName
-        let state = currentModel.selectedDevice == .desktop
-            ? "" : (doc.isCustomized(currentModel.selectedDevice) ? " · Customized" : " · Auto")
-        return device + state
+        guard let shaderId = currentDocument?.shaderId else { return "" }
+        return StripTileStore.displayName(shaderId)
     }
 
     // MARK: - Filmstrip (Photos-style neighbor strip)
