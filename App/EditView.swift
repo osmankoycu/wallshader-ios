@@ -13,6 +13,11 @@ struct EditView: View {
     /// Creation flow (+ sheet): Cancel discards the freshly created
     /// wallpaper instead of restoring an entry snapshot.
     var onCancel: (() -> Void)? = nil
+    /// Detail-morph mode: the preview area is an EMPTY measured slot (the
+    /// detail screen flies its single hero layer into it) and closing goes
+    /// through the owner instead of a dismissal.
+    var heroMode: Bool = false
+    var onClose: (() -> Void)? = nil
     @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.undoManager) private var undoManager
@@ -55,11 +60,20 @@ struct EditView: View {
 
                 GeometryReader { geo in
                     ZStack {
-                        PreviewMetalView(model: model.preview,
-                                         mode: app.previewsPaused ? .frozen : .live)
-                            .aspectRatio(model.selectedDevice.canonicalAspect,
-                                         contentMode: .fit)
-                            .frame(width: geo.size.width, height: geo.size.height)
+                        if heroMode {
+                            Color.clear
+                                .aspectRatio(model.selectedDevice.canonicalAspect,
+                                             contentMode: .fit)
+                                .frame(width: geo.size.width, height: geo.size.height)
+                                .anchorPreference(key: EditSlotAnchorKey.self,
+                                                  value: .bounds) { $0 }
+                        } else {
+                            PreviewMetalView(model: model.preview,
+                                             mode: app.previewsPaused ? .frozen : .live)
+                                .aspectRatio(model.selectedDevice.canonicalAspect,
+                                             contentMode: .fit)
+                                .frame(width: geo.size.width, height: geo.size.height)
+                        }
                         // Like Photos' Crop: framing gestures live in the
                         // Frame tab only — no accidental re-framing while
                         // scrubbing an unrelated slider.
@@ -159,7 +173,7 @@ struct EditView: View {
     private func cancel() {
         if let onCancel {
             onCancel()
-            dismiss()
+            close()
             return
         }
         // Restore the state the session opened with (Photos semantics) —
@@ -169,12 +183,20 @@ struct EditView: View {
             model.library.save(snapshot, touchModified: false)
             model.reloadEditor()
         }
-        dismiss()
+        close()
     }
 
     private func done() {
         model.flushPendingWriteback()
-        dismiss()
+        close()
+    }
+
+    private func close() {
+        if let onClose {
+            onClose()
+        } else {
+            dismiss()
+        }
     }
 
     // MARK: - Per-tab control area
@@ -218,6 +240,15 @@ struct EditView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
         .chromeGlass(in: Capsule())
+    }
+}
+
+/// The editor's preview slot, reported to the detail screen so its hero
+/// layer knows where to fly.
+struct EditSlotAnchorKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>?
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
     }
 }
 

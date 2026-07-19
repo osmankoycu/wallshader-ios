@@ -15,6 +15,12 @@ struct DetailView: View {
     @State var currentID: UUID
     /// Photos-style zoom back to the grid tile (nil on iPad's split view).
     var zoomNamespace: Namespace.ID?
+    // Detail→edit morph: ONE hero preview layer flies between full screen
+    // and the editor's measured slot; the pager's own page hides while it
+    // is active and the editor UI fades in around it.
+    @State private var heroActive = false
+    @State private var editorRevealed = false
+    @State private var editSlotAnchor: Anchor<CGRect>?
     @StateObject private var models = ModelCache()
     @State private var editing = false
     @State private var chromeHidden = false
@@ -127,8 +133,42 @@ struct DetailView: View {
                 withTransaction(transaction) { pagerID = currentID }
             }
         }
-        .fullScreenCover(isPresented: $editing) {
-            EditView(model: currentModel)
+        // The editor is an in-place layer, not a presentation. Its preview
+        // area is an EMPTY slot: the single hero layer below carries the
+        // actual wallpaper, so "another image arriving" is structurally
+        // impossible — the one on screen simply shrinks into place while
+        // the UI cross-fades (the Photos edit morph).
+        .overlay {
+            if editing {
+                EditView(model: currentModel, heroMode: true,
+                         onClose: { closeEditor() })
+                .opacity(editorRevealed ? 1 : 0)
+            }
+        }
+        .onPreferenceChange(EditSlotAnchorKey.self) { editSlotAnchor = $0 }
+        .overlay {
+            if heroActive {
+                GeometryReader { proxy in
+                    let full = CGRect(origin: .zero, size: proxy.size)
+                    let rect = (editorRevealed && editing && editSlotAnchor != nil)
+                        ? proxy[editSlotAnchor!] : full
+                    PreviewMetalView(model: currentModel.preview, mode: .live)
+                        .aspectRatio(currentModel.selectedDevice.canonicalAspect,
+                                     contentMode: .fit)
+                        .frame(width: rect.width, height: rect.height)
+                        .position(x: rect.midX, y: rect.midY)
+                        .allowsHitTesting(false)
+                }
+                .ignoresSafeArea()
+            }
+        }
+        .onChange(of: editSlotAnchor != nil) { _, hasSlot in
+            // Reveal only once the slot is measured: the hero then animates
+            // to a known target instead of guessing a frame early.
+            guard hasSlot, editing, !editorRevealed else { return }
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                editorRevealed = true
+            }
         }
         .sheet(isPresented: $showingGuide) { GuideSheet() }
         .sheet(isPresented: $showingSizeSheet) {
@@ -156,7 +196,7 @@ struct DetailView: View {
             // Screenshot automation (make screens): jump straight into edit.
             if CommandLine.arguments.contains("--auto-edit") {
                 try? await Task.sleep(for: .seconds(1))
-                editing = true
+                openEditor()
             }
         }
         // Neighbor pages cost a main-thread photo decode when their model
@@ -177,6 +217,25 @@ struct DetailView: View {
         withTransaction(transaction) {
             currentID = id
             pagerID = id
+        }
+    }
+
+    private func openEditor() {
+        // Hero takes over the wallpaper at its CURRENT frame (identical
+        // pixels, no visible handoff), the editor mounts invisibly, and
+        // the reveal fires once its slot reports in (onPreferenceChange).
+        heroActive = true
+        editing = true
+    }
+
+    private func closeEditor() {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86),
+                      completionCriteria: .logicallyComplete) {
+            editorRevealed = false
+        } completion: {
+            editing = false
+            heroActive = false
+            editSlotAnchor = nil
         }
     }
 
@@ -205,10 +264,14 @@ struct DetailView: View {
         } else if doc.needsSourceImage && doc.sourceImage == nil {
             PhotoDropZoneView(model: model)
         } else {
-            PreviewMetalView(model: model.preview, mode: pageMode(doc))
-                .aspectRatio(model.selectedDevice.canonicalAspect, contentMode: .fill)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
+            if heroActive && doc.id == currentID {
+                Color.black
+            } else {
+                PreviewMetalView(model: model.preview, mode: pageMode(doc))
+                    .aspectRatio(model.selectedDevice.canonicalAspect, contentMode: .fill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            }
         }
     }
 
@@ -423,7 +486,7 @@ struct DetailView: View {
 
                 Button {
                     currentModel.undoManager = undoManager
-                    editing = true
+                    openEditor()
                 } label: {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 20, weight: .semibold))
