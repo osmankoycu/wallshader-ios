@@ -23,6 +23,12 @@ struct DetailView: View {
     @State private var confirmingDelete = false
     @State private var showingGuide = false
     @State private var saveError: String?
+    /// The pager's scroll position. A real state, NOT a computed binding
+    /// to currentID: a computed get told ScrollView it was already on the
+    /// target page, so a freshly pushed detail never scrolled and showed
+    /// the FIRST wallpaper regardless of what was tapped. Starts nil and
+    /// is asserted after layout.
+    @State private var pagerID: UUID?
     // Filmstrip scrubbing (iOS 18 scroll geometry): the strip is a
     // center-locked scrubber — dragging it retargets the current
     // wallpaper tick by tick; taps jump instantly.
@@ -70,7 +76,7 @@ struct DetailView: View {
             }
             .scrollTargetBehavior(.paging)
             .scrollIndicators(.hidden)
-            .scrollPosition(id: pagePosition)
+            .scrollPosition(id: $pagerID)
             .ignoresSafeArea()
             .onTapGesture {
                 withAnimation(.easeInOut(duration: 0.2)) { chromeHidden.toggle() }
@@ -87,8 +93,23 @@ struct DetailView: View {
         // in the pager retargets it, and the grid scrolls along behind
         // (selectedID sync below) so the tile is on screen to land on.
         .zoomTransition(sourceID: currentID, in: zoomNamespace)
+        .onChange(of: pagerID) { _, id in
+            if let id, id != currentID { currentID = id }
+        }
         .onChange(of: currentID) { _, id in
             app.selectedID = id
+            if pagerID != id { pagerID = id }
+        }
+        .task {
+            // Position the pager on the pushed wallpaper once layout
+            // exists (and once more after the zoom transition settles).
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { pagerID = currentID }
+            try? await Task.sleep(for: .milliseconds(250))
+            if pagerID != currentID {
+                withTransaction(transaction) { pagerID = currentID }
+            }
         }
         .fullScreenCover(isPresented: $editing) {
             EditView(model: currentModel)
@@ -123,11 +144,35 @@ struct DetailView: View {
                 editing = true
             }
         }
+        // Neighbor pages cost a main-thread photo decode when their model
+        // first exists — pay that in idle right after arriving on a page,
+        // never inside the first swipe gesture (the reported hitch).
+        .task(id: currentID) {
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            prewarmNeighbors()
+        }
     }
 
-    /// scrollPosition wants an optional; currentID never is.
-    private var pagePosition: Binding<UUID?> {
-        Binding(get: { currentID }, set: { if let id = $0 { currentID = id } })
+    /// Instant page jump (strip taps, scrub ticks): both states move in
+    /// one animation-free transaction.
+    private func jumpPager(to id: UUID) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            currentID = id
+            pagerID = id
+        }
+    }
+
+    private func prewarmNeighbors() {
+        let docs = library.documents
+        guard let index = docs.firstIndex(where: { $0.id == currentID }) else { return }
+        for offset in [-1, 1] {
+            let j = index + offset
+            guard docs.indices.contains(j) else { continue }
+            _ = model(for: docs[j].id)
+        }
     }
 
     private func isNeighbor(_ id: UUID) -> Bool {
@@ -301,7 +346,16 @@ struct DetailView: View {
                     }
                 }
             }
-            .onAppear { proxy.scrollTo(currentID, anchor: .center) }
+            .task {
+                // Arrival centering: an immediate onAppear scroll fired
+                // before margins/zoom-transition settled and missed —
+                // re-center after layout, twice, unanimated.
+                for delay in [80, 350] {
+                    try? await Task.sleep(for: .milliseconds(delay))
+                    guard !Task.isCancelled, !stripScrubbing else { return }
+                    proxy.scrollTo(currentID, anchor: .center)
+                }
+            }
         }
     }
 
@@ -323,9 +377,7 @@ struct DetailView: View {
         let index = min(max(raw, 0), docs.count - 1)
         let id = docs[index].id
         guard id != currentID else { return }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { currentID = id }
+        jumpPager(to: id)
         Self.stripHaptic.selectionChanged()
     }
 
@@ -336,9 +388,7 @@ struct DetailView: View {
             // Photos: a tap lands DIRECTLY on that wallpaper — no sliding
             // through everything in between.
             stripTapJump = true
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { currentID = doc.id }
+            jumpPager(to: doc.id)
         } label: {
             Group {
                 if let cg = DeviceThumbnailStore.shared.thumbnail(for: doc, app: app) {
