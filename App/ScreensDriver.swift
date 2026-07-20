@@ -23,6 +23,11 @@ enum ScreensDriver {
         if args.contains("--suppress-onboarding") {
             UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
         }
+        // Field probes drive the device from a Mac shell; don't let the
+        // screen lock mid-diagnosis.
+        if args.contains(where: { $0.hasPrefix("--strip-probe") || $0 == "--gpu-probe" }) {
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
     }
 
     static func runIfRequested(app: AppModel) {
@@ -41,6 +46,30 @@ enum ScreensDriver {
         }
         if args.contains("--gpu-probe") {
             runGPUProbe(app: app)
+            return
+        }
+        if args.contains("--strip-probe") {
+            runStripProbe(app: app)
+            return
+        }
+        if let index = args.firstIndex(of: "--strip-probe-one"), index + 1 < args.count {
+            runStripProbeOne(app: app, shaderId: args[index + 1])
+            return
+        }
+        if args.contains("--strip-probe-calm") {
+            // Same renders, but AFTER the launch-time thumbnail storm has
+            // settled and strictly sequential — isolates concurrency as the
+            // wedge trigger.
+            Task { @MainActor in
+                print("strip-probe-calm: waiting 8s for launch quiescence")
+                try? await Task.sleep(for: .seconds(8))
+                for id in ["mesh-gradient", "static-mesh-gradient", "grain-gradient",
+                           "warp", "waves", "neuro-noise", "voronoi", "metaballs"] {
+                    runStripProbeOneStep(app: app, shaderId: id)
+                }
+                print("strip-probe-calm: end")
+                exit(0)
+            }
             return
         }
         guard let index = args.firstIndex(of: "--screen"), index + 1 < args.count else { return }
@@ -125,6 +154,128 @@ enum ScreensDriver {
         watchdog.cancel()
         print("gpu-probe: end")
         exit(0)
+    }
+
+    /// One shader, one process: renders `shaderId` offscreen at the strip's
+    /// tile size, then bigger. A SIGKILLed launch = that shader wedges the
+    /// GPU on this device; the shell loops over ids to map the blast radius.
+    private static func runStripProbeOne(app: AppModel, shaderId: String) {
+        runStripProbeOneStep(app: app, shaderId: shaderId)
+        print("strip-probe-one: \(shaderId) end")
+        exit(0)
+    }
+
+    private static func runStripProbeOneStep(app: AppModel, shaderId: String) {
+        guard let renderer = app.renderer, let schema = ShaderRegistry.shared.schema(for: shaderId) else {
+            print("strip-probe-one: \(shaderId) NO RENDERER/SCHEMA")
+            return
+        }
+        let off = OffscreenRenderer(renderer: renderer)
+        for (w, h) in [(192, 120), (400, 866)] {
+            print("strip-probe-one: \(shaderId) \(w)x\(h) START")
+            do {
+                _ = try off.renderImage(shaderId: shaderId, params: ShaderParams(schema: schema),
+                                        pixelWidth: w, pixelHeight: h, pixelRatio: 2,
+                                        timeSeconds: 0)
+                print("strip-probe-one: \(shaderId) \(w)x\(h) ok")
+            } catch {
+                print("strip-probe-one: \(shaderId) \(w)x\(h) FAIL \(error)")
+            }
+        }
+    }
+
+    /// Field diagnosis for the blank-strip bug: replays StripTileStore's
+    /// exact render path in three phases and prints every step, so a
+    /// devicectl console launch shows precisely which configuration wedges.
+    /// A: sequential renders on the main thread. B: the real storm —
+    /// concurrent Task.detached(.utility) renders. C: the storm again while
+    /// a real document's live preview runs.
+    private static func runStripProbe(app: AppModel) {
+        print("strip-probe: begin")
+        guard let renderer = app.renderer else {
+            print("strip-probe: renderer INIT FAILED")
+            exit(1)
+        }
+        let ids = StripTileStore.orderedIds(for: .procedural)
+        print("strip-probe: \(ids.count) procedural shaders, device=\(renderer.device.name)")
+
+        struct Box: @unchecked Sendable { let off: OffscreenRenderer }
+        let box = Box(off: OffscreenRenderer(renderer: renderer))
+        final class Progress: @unchecked Sendable {
+            let lock = NSLock()
+            var done: Set<String> = []
+            func mark(_ id: String) { lock.lock(); done.insert(id); lock.unlock() }
+            func missing(from ids: [String]) -> [String] {
+                lock.lock(); defer { lock.unlock() }
+                return ids.filter { !done.contains($0) }
+            }
+        }
+
+        let render: @Sendable (String) throws -> Void = { id in
+            guard let schema = ShaderRegistry.shared.schema(for: id) else { return }
+            _ = try box.off.renderImage(shaderId: id, params: ShaderParams(schema: schema),
+                                        pixelWidth: 192, pixelHeight: 120, pixelRatio: 2,
+                                        timeSeconds: 0)
+        }
+
+        func storm(_ phase: String, then next: @escaping @Sendable () -> Void) {
+            print("strip-probe: \(phase) storm START")
+            // Lane probes: which execution lanes are alive at all?
+            Task.detached(priority: .utility) { print("strip-probe: \(phase) lane detached-utility alive") }
+            Task.detached(priority: .userInitiated) { print("strip-probe: \(phase) lane detached-userInitiated alive") }
+            Task { print("strip-probe: \(phase) lane main-task alive") }
+            DispatchQueue.global(qos: .utility).async { print("strip-probe: \(phase) lane gcd-utility alive") }
+            let progress = Progress()
+            for id in ids {
+                Task.detached(priority: .utility) {
+                    print("strip-probe: \(phase) \(id) task-running")
+                    do {
+                        try render(id)
+                        print("strip-probe: \(phase) \(id) ok")
+                    } catch {
+                        print("strip-probe: \(phase) \(id) FAIL \(error)")
+                    }
+                    progress.mark(id)
+                }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 15) {
+                let missing = progress.missing(from: ids)
+                print("strip-probe: \(phase) verdict after 15s — missing: "
+                    + (missing.isEmpty ? "none" : missing.joined(separator: ",")))
+                next()
+            }
+        }
+
+        Task { @MainActor in
+        // Let the launch-time thumbnail storm settle first, so phase A
+        // measures renders in true isolation.
+        print("strip-probe: waiting 8s for launch quiescence")
+        try? await Task.sleep(for: .seconds(8))
+
+        // Phase A: sequential, main thread — does ANY offscreen render work?
+        for id in ids {
+            print("strip-probe: A \(id) START")
+            do { try render(id); print("strip-probe: A \(id) ok") }
+            catch { print("strip-probe: A \(id) FAIL \(error)") }
+        }
+
+        // Phase B: the exact StripTileStore storm, no live preview.
+        storm("B") {
+            Task { @MainActor in
+                // Phase C: open a real document (its live preview + display
+                // link start), then storm again.
+                if let doc = app.library.documents.first(where: { $0.kind == .procedural && $0.isAppliable }) {
+                    app.open(doc.id)
+                    print("strip-probe: C opened \(doc.name)")
+                }
+                try? await Task.sleep(for: .seconds(3))
+                storm("C") {
+                    print("strip-probe: end")
+                    exit(0)
+                }
+            }
+        }
+        }
     }
 
     /// End-to-end Live Photo save (the TCC-abort regression): renders the

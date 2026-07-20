@@ -47,10 +47,17 @@ final class StripTileStore: ObservableObject {
         let texture = schema.needsTexture ? model.preview.texture : nil
         let box = RendererBox(renderer: renderer)
         Task.detached(priority: .utility) { [weak self] in
-            let image = try? box.offscreen.renderImage(
-                shaderId: shaderId, params: params,
-                pixelWidth: 192, pixelHeight: 120, pixelRatio: 2,
-                timeSeconds: 0, texture: texture)
+            let image: CGImage?
+            do {
+                image = try box.offscreen.renderImage(
+                    shaderId: shaderId, params: params,
+                    pixelWidth: 192, pixelHeight: 120, pixelRatio: 2,
+                    timeSeconds: 0, texture: texture)
+                print("strip-tile ok \(shaderId)")
+            } catch {
+                print("strip-tile FAIL \(shaderId): \(error)")
+                image = nil
+            }
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.inFlight.remove(key)
