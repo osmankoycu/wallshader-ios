@@ -49,6 +49,9 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
             showingOnboarding = true
         }
+        // Bulk-hydrate grid thumbnails from disk before the first frame
+        // asks for them — the library appears fully populated at once.
+        DeviceThumbnailStore.shared.preload(docs: library.documents)
         startSyncIfEnabled()
     }
 

@@ -1,5 +1,8 @@
+import CryptoKit
+import ImageIO
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 import WallshaderModel
 
 /// The library — grid on iPhone (root screen), sidebar list on iPad.
@@ -712,6 +715,10 @@ final class DeviceThumbnailStore: ObservableObject {
     /// photo decode + adjustment pass + texture upload all run DETACHED;
     /// doing them synchronously here stalled the main thread on every
     /// cache miss (once per save, mid-drag included).
+    ///
+    /// Renders persist to disk (stamp-keyed PNGs): a relaunch reads them
+    /// back instead of re-rendering the whole library — the launch-time
+    /// full-res render storm is gone, the grid fills instantly.
     func thumbnail(for doc: WallpaperDocument, app: AppModel) -> CGImage? {
         let stamp = stamp(doc)
         let hit = cache[doc.id]
@@ -719,6 +726,10 @@ final class DeviceThumbnailStore: ObservableObject {
         guard !inFlight.contains(doc.id), let renderer = app.renderer,
               doc.shaderId != nil, doc.isAppliable else { return hit?.image }
         inFlight.insert(doc.id)
+        if !cleanedUp {
+            cleanedUp = true
+            Self.cleanup(keeping: app.library.documents.map(\.id))
+        }
         let library = app.library
         let device = AppModel.currentDevice
         let sourceURL = doc.needsSourceImage ? library.sourceImageURL(for: doc) : nil
@@ -730,7 +741,18 @@ final class DeviceThumbnailStore: ObservableObject {
         let width = 360
         let height = max(64, Int((Double(width) * px.height / px.width).rounded()))
         let box = RendererBox(renderer: renderer)
+        let diskURL = Self.diskURL(id: doc.id, stamp: stamp)
         Task.detached(priority: .utility) { [weak self] in
+            // Disk first: a relaunch rehydrates without touching the GPU.
+            if let stored = Self.readPNG(at: diskURL) {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.inFlight.remove(doc.id)
+                    self.cache[doc.id] = (stamp, stored)
+                    self.objectWillChange.send()
+                }
+                return
+            }
             var texture: MTLTexture?
             if let sourceURL {
                 if let adjustments = doc.adjustments, !adjustments.isNeutral,
@@ -744,15 +766,21 @@ final class DeviceThumbnailStore: ObservableObject {
             let aspect = texture.map { Double($0.width) / Double(max(1, $0.height)) }
             var image: CGImage?
             if let params = doc.shaderParams(for: device, imageAspect: aspect) {
-                image = try? box.offscreen.renderImage(
+                let ratio: Float = device == .ipad ? 2 : 3
+                // Every thumbnail is the TRUE wallpaper: rendered at the
+                // device's canonical pixels and scaled down — what you tap
+                // is exactly what the detail screen resumes (and the
+                // fragCoord pair can't be miniaturized at all). Offline and
+                // disk-cached, so the full-res cost is paid once per edit.
+                let full = try? box.offscreen.renderImage(
                     shaderId: doc.shaderId!, params: params,
-                    pixelWidth: width, pixelHeight: height,
-                    pixelRatio: device == .ipad ? 2 : 3,
+                    pixelWidth: Int(px.width), pixelHeight: Int(px.height),
+                    pixelRatio: ratio,
                     timeSeconds: Float(params.frame * 0.001),
-                    texture: texture, ambient: ambient,
-                    emulatedTarget: (SIMD2(Float(px.width), Float(px.height)),
-                                     device == .ipad ? 2 : 3))
+                    texture: texture, ambient: ambient)
+                image = full.flatMap { Self.downscaled($0, width: width, height: height) }
             }
+            if let image { Self.writePNG(image, id: doc.id, stamp: stamp, to: diskURL) }
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.inFlight.remove(doc.id)
@@ -763,6 +791,117 @@ final class DeviceThumbnailStore: ObservableObject {
             }
         }
         return hit?.image
+    }
+
+    // MARK: - Disk persistence (regenerable — lives in Caches)
+
+    private var cleanedUp = false
+
+    /// Launch-time bulk hydrate: read EVERY stored thumbnail in one detached
+    /// pass and publish once — the grid's first frame is fully populated
+    /// instead of tiles popping in one by one as their reads land.
+    func preload(docs: [WallpaperDocument]) {
+        let wanted: [(id: UUID, stamp: String, url: URL)] = docs.compactMap { doc in
+            let stamp = stamp(doc)
+            guard cache[doc.id]?.stamp != stamp,
+                  let url = Self.diskURL(id: doc.id, stamp: stamp) else { return nil }
+            return (doc.id, stamp, url)
+        }
+        guard !wanted.isEmpty else { return }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            var loaded: [(UUID, String, CGImage)] = []
+            for entry in wanted {
+                if let image = Self.readPNG(at: entry.url) {
+                    loaded.append((entry.id, entry.stamp, image))
+                }
+            }
+            guard !loaded.isEmpty else { return }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                for (id, stamp, image) in loaded where self.cache[id]?.stamp != stamp {
+                    self.cache[id] = (stamp, image)
+                }
+                self.objectWillChange.send()
+            }
+        }
+    }
+
+    nonisolated private static var diskDirectory: URL? {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory,
+                                                    in: .userDomainMask).first else { return nil }
+        let dir = caches.appendingPathComponent("DeviceThumbnails", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Stamps carry arbitrary strings (photo cache keys) — hash them into a
+    /// stable filename. Hasher is launch-seeded, so SHA256 it is.
+    nonisolated private static func diskURL(id: UUID, stamp: String) -> URL? {
+        guard let dir = diskDirectory else { return nil }
+        let digest = SHA256.hash(data: Data(stamp.utf8))
+            .prefix(8).map { String(format: "%02x", $0) }.joined()
+        return dir.appendingPathComponent("\(id.uuidString)-\(digest).png")
+    }
+
+    nonisolated private static func readPNG(at url: URL?) -> CGImage? {
+        guard let url, FileManager.default.fileExists(atPath: url.path),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
+
+    nonisolated private static func writePNG(_ image: CGImage, id: UUID, stamp: String, to url: URL?) {
+        guard let url else { return }
+        // Encode in memory, then one atomic Data.write — ImageIO's direct
+        // file writer (CGImageDestinationCreateWithURL + Finalize) fails on
+        // device hardware while the in-memory encoder is fine everywhere.
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data as CFMutableData, UTType.png.identifier as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            print("thumb-disk: png encode FAILED \(url.lastPathComponent)")
+            return
+        }
+        // A changed stamp means the old render is stale — drop its file.
+        removeFiles(for: id, except: url.lastPathComponent)
+        do {
+            try (data as Data).write(to: url, options: .atomic)
+        } catch {
+            print("thumb-disk: file write FAILED \(url.lastPathComponent): \(error)")
+        }
+    }
+
+    nonisolated private static func removeFiles(for id: UUID, except keep: String? = nil) {
+        guard let dir = diskDirectory,
+              let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return }
+        for file in files where file.hasPrefix(id.uuidString) && file != keep {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(file))
+        }
+    }
+
+    /// Once per launch: drop files for documents that no longer exist.
+    nonisolated private static func cleanup(keeping ids: [UUID]) {
+        let valid = Set(ids.map(\.uuidString))
+        Task.detached(priority: .utility) {
+            guard let dir = diskDirectory,
+                  let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return }
+            for file in files {
+                let prefix = String(file.prefix(36))
+                if !valid.contains(prefix) {
+                    try? FileManager.default.removeItem(at: dir.appendingPathComponent(file))
+                }
+            }
+        }
+    }
+
+    nonisolated private static func downscaled(_ image: CGImage, width: Int, height: Int) -> CGImage? {
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 }
 
