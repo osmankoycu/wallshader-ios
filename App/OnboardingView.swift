@@ -90,9 +90,17 @@ struct OnboardingView: View {
     /// shader inside KEEPS the screen's aspect and fills (cropping the
     /// sides) — a proportional shrink, never a squeeze.
     private func hero(in geo: GeometryProxy, slot: CGRect) -> some View {
-        Color.clear
-            .frame(width: collapsed ? slot.width : geo.size.width,
-                   height: collapsed ? slot.height : geo.size.height)
+        let portrait = geo.size.height >= geo.size.width
+        let fast = Animation.timingCurve(0.16, 1, 0.3, 1, duration: shrink * 0.55)
+        let full = Animation.timingCurve(0.16, 1, 0.3, 1, duration: shrink)
+        return Color.clear
+            // The LONG axis lands early: the frame passes through square
+            // almost immediately instead of shrinking as a tall (or
+            // wide) card the whole flight.
+            .frame(height: collapsed ? slot.height : geo.size.height)
+            .animation(portrait ? fast : full, value: collapsed)
+            .frame(width: collapsed ? slot.width : geo.size.width)
+            .animation(portrait ? full : fast, value: collapsed)
             .overlay {
                 PreviewMetalView(model: preview)
                     .aspectRatio(max(geo.size.width, 1) / max(geo.size.height, 1),
@@ -121,7 +129,9 @@ struct OnboardingView: View {
                 .padding(.bottom, 12)
 
             Text("Welcome to Wallshader")
-                .font(.largeTitle.weight(.bold))
+                // .title on the phone: .largeTitle ran edge-to-edge there.
+                .font(UIDevice.current.userInterfaceIdiom == .phone
+                      ? .title.weight(.bold) : .largeTitle.weight(.bold))
                 .foregroundStyle(.white)
                 .staggeredIn(shown: collapsed, delay: shrink)
 
