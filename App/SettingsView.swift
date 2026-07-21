@@ -69,7 +69,7 @@ struct SettingsView: View {
 }
 
 /// About (C9): same credits as the Mac — Paper Shaders (Apache-2.0),
-/// Unsplash attribution, licenses.
+/// licenses. (No Unsplash credit while the source is hidden.)
 struct AboutView: View {
     var body: some View {
         List {
@@ -89,14 +89,6 @@ struct AboutView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Paper Shaders")
                         Text("The open-source shader collection Wallshader's looks are ported from. Apache License 2.0.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Link(destination: URL(string: "https://unsplash.com/?utm_source=wallshader&utm_medium=referral")!) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Unsplash")
-                        Text("Photo search powered by Unsplash.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
