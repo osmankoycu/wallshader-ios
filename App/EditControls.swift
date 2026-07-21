@@ -925,8 +925,8 @@ struct ColorControlsRow: View {
                         if let mode = PhotoColorMode(rawValue: name) { setMode(mode) }
                     })
                 if currentMode == .custom {
-                    paletteStrip(PaletteStore.matching(count: singleColorParams.count),
-                                 isSelected: singlesMatch, apply: applyToSingles)
+                    paletteStrip(PaletteStore.all,
+                                 isSelected: paletteSelected, apply: applyPalette)
                     if showsWells {
                         CenteredScrollRow(spacing: 14) {
                             ForEach(singleColorParams, id: \.name) { param in
@@ -936,9 +936,8 @@ struct ColorControlsRow: View {
                     }
                 }
             } else if let param = colorArrayParam {
-                paletteStrip(PaletteStore.matching(count: colors(param).count),
-                             isSelected: { arrayMatches($0, param: param) },
-                             apply: { applyToArray($0, param: param) })
+                paletteStrip(PaletteStore.all,
+                             isSelected: paletteSelected, apply: applyPalette)
                 if showsWells {
                     CenteredScrollRow(spacing: 12) {
                         arrayWells(param)
@@ -951,8 +950,8 @@ struct ColorControlsRow: View {
                     }
                 }
             } else if !singleColorParams.isEmpty {
-                paletteStrip(PaletteStore.matching(count: singleColorParams.count),
-                             isSelected: singlesMatch, apply: applyToSingles)
+                paletteStrip(PaletteStore.all,
+                             isSelected: paletteSelected, apply: applyPalette)
                 if showsWells {
                     CenteredScrollRow(spacing: 14) {
                         ForEach(singleColorParams, id: \.name) { param in
@@ -1028,31 +1027,36 @@ struct ColorControlsRow: View {
         }
     }
 
-    private func applyToSingles(_ palette: ColorPalette) {
-        for (index, param) in singleColorParams.enumerated()
-        where index < palette.colors.count {
-            model.preview.params[param.name] = .color(palette.colors[index])
+    /// The role engine's projection of a palette onto THIS shader (#79):
+    /// same math as the Mac, so a pick lands identically on both.
+    private func resolution(for palette: ColorPalette) -> PaletteAssignment.Resolution {
+        PaletteAssignment.resolve(
+            palette: palette,
+            shaderId: model.schema?.id ?? "",
+            colorParamNames: singleColorParams.map(\.name),
+            arrayMaxCount: colorArrayParam.map { min($0.maxCount ?? 8, 7) })
+    }
+
+    /// One tap restyles the whole shader: the array takes the palette's
+    /// flow, the fixed slots are cast by role.
+    private func applyPalette(_ palette: ColorPalette) {
+        let resolved = resolution(for: palette)
+        for (name, hex) in resolved.fixed {
+            model.preview.params[name] = .color(hex)
+        }
+        if let param = colorArrayParam {
+            model.preview.params[param.name] = .colorArray(resolved.array)
         }
     }
 
-    private func applyToArray(_ palette: ColorPalette, param: ShaderSchema.Param) {
-        model.preview.params[param.name] = .colorArray(palette.colors)
-    }
-
-    private func singlesMatch(_ palette: ColorPalette) -> Bool {
-        guard palette.colors.count == singleColorParams.count else { return false }
-        return zip(singleColorParams, palette.colors).allSatisfy { param, hex in
-            if case .color(let current)? = model.preview.params[param.name] {
-                return current.lowercased() == hex.lowercased()
+    private func paletteSelected(_ palette: ColorPalette) -> Bool {
+        let fixed = singleColorParams.reduce(into: [String: String]()) { dict, param in
+            if case .color(let hex)? = model.preview.params[param.name] {
+                dict[param.name] = hex
             }
-            return false
         }
-    }
-
-    private func arrayMatches(_ palette: ColorPalette, param: ShaderSchema.Param) -> Bool {
-        let current = colors(param)
-        guard current.count == palette.colors.count else { return false }
-        return zip(current, palette.colors).allSatisfy { $0.lowercased() == $1.lowercased() }
+        let array = colorArrayParam.map(colors) ?? []
+        return resolution(for: palette).matches(fixed: fixed, array: array)
     }
 
     // MARK: - Wells
