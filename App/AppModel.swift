@@ -33,6 +33,9 @@ final class AppModel: ObservableObject {
     @Published var previewsPaused = false
     @Published var showingPaywall = false
     @Published var showingOnboarding = false
+    /// Screens-probe only: presents GuideSheet over the root
+    /// (`--screen guide`) — the real sheet rides DetailView state.
+    @Published var showingGuideProbe = false
 
     private init() {
         let renderer = try? ShaderRenderer()

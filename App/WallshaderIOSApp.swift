@@ -63,5 +63,6 @@ struct RootView: View {
                 }
         }
         .fullScreenCover(isPresented: $app.showingOnboarding) { OnboardingView() }
+        .sheet(isPresented: $app.showingGuideProbe) { GuideSheet() }
     }
 }

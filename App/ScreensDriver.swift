@@ -108,6 +108,8 @@ enum ScreensDriver {
                 }
             case "paywall":
                 app.showingPaywall = true
+            case "guide":
+                app.showingGuideProbe = true
             case "onboarding":
                 app.showingOnboarding = true
             default:
