@@ -213,11 +213,19 @@ private struct FrameTouchView: UIViewRepresentable {
                 scaleBase = number("scale", 1)
             case .changed:
                 guard let base = scaleBase, recognizer.scale.isFinite else { return }
-                // Clamp to the SCHEMA's scale range (all shaders carry
-                // one; procedural documents frame through here too).
+                // Mac-parity clamp: photos pinch within 0.25...4; procedural
+                // shaders keep their schema range FLOORED at 0.05 — upstream
+                // schemas allow 0.01, which shrinks the pattern (or photo)
+                // into invisibility.
                 let param = model.schema?.params.first { $0.name == "scale" }
-                let lo = param?.min ?? 0.25
-                let hi = param?.max ?? 4
+                let lo: Double
+                let hi: Double
+                if model.document?.needsSourceImage == true {
+                    lo = 0.25; hi = 4
+                } else {
+                    lo = max(param?.min ?? 0.01, 0.05)
+                    hi = max(lo + 0.01, param?.max ?? 4)
+                }
                 let next = min(hi, max(lo, base * Double(recognizer.scale)))
                 guard next.isFinite else { return }
                 model.preview.params["scale"] = .number(next)
