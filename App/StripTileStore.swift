@@ -14,10 +14,19 @@ final class StripTileStore: ObservableObject {
     private var inFlight: Set<String> = []
 
     static func orderedIds(for kind: WallpaperDocument.Kind) -> [String] {
-        ShaderRegistry.shared.orderedIds.filter { id in
+        let matching = ShaderRegistry.shared.orderedIds.filter { id in
             let needsTexture = ShaderRegistry.shared.schema(for: id)?.needsTexture ?? false
             return (kind == .imageBased) == needsTexture
         }
+        // Mac parity (CenterEditorView): animated shaders lead for
+        // shader documents, stills lead for photo documents; stable
+        // within each group so the registry order holds.
+        func isAnimated(_ id: String) -> Bool {
+            ShaderRegistry.shared.schema(for: id)?.animated ?? false
+        }
+        let animated = matching.filter(isAnimated)
+        let still = matching.filter { !isAnimated($0) }
+        return kind == .imageBased ? still + animated : animated + still
     }
 
     static func displayName(_ id: String) -> String {
