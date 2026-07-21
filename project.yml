@@ -41,6 +41,40 @@ settings:
       CODE_SIGN_STYLE: Automatic
 
 targets:
+  # Quick Look preview appex: renders a tapped .wallshader's true look
+  # (Messages/Mail/Files). Data-based provider — no UI, tiny footprint.
+  WallshaderQuickLook:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: QuickLook
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.innovationBox.wallshader.quicklook
+        PRODUCT_NAME: WallshaderQuickLook
+        SKIP_INSTALL: YES
+    dependencies:
+      - package: ShaderCore
+      - package: WallshaderModel
+      # The extension POINT's context class lives in QuickLook.framework —
+      # without this explicit link the system logs "Unable to find
+      # NSExtensionContextClass (QLPreviewExtensionServiceContext_iOS)"
+      # and silently falls back to the generic document card.
+      - sdk: QuickLook.framework
+    info:
+      path: QuickLook/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDisplayName: Wallshader Preview
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.preview
+          NSExtensionMainStoryboard: MainInterface
+          NSExtensionAttributes:
+            QLSupportedContentTypes:
+              - com.innovationBox.wallshader.wallpaper
+            QLSupportsSearchableItems: false
+
   WallshaderIOS:
     type: application
     platform: iOS
@@ -75,6 +109,8 @@ targets:
       - package: WallshaderPalettes
       - package: WallshaderStoreCore
       - package: UnsplashKit
+      - target: WallshaderQuickLook
+        embed: true
     postBuildScripts:
       - name: Copy Unsplash config (optional, gitignored secret)
         script: |
@@ -100,11 +136,16 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         UTImportedTypeDeclarations: []
+        # public.content marks the file as a user document (a bare
+        # public.data reads as inert binary — Messages showed a dead
+        # bubble); Owner rank + in-place opening give Files/AirDrop their
+        # open-in-Wallshader affordances.
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: com.innovationBox.wallshader.wallpaper
             UTTypeDescription: Wallshader Wallpaper
             UTTypeConformsTo:
               - public.data
+              - public.content
             UTTypeTagSpecification:
               public.filename-extension:
                 - wallshader
@@ -114,7 +155,7 @@ targets:
             LSHandlerRank: Owner
             LSItemContentTypes:
               - com.innovationBox.wallshader.wallpaper
-        LSSupportsOpeningDocumentsInPlace: false
+        LSSupportsOpeningDocumentsInPlace: true
 
   # Hermetic logic tests (no app host) over the shared packages + app-level
   # tables, mirroring the Mac repo's test-target philosophy.

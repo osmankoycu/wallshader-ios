@@ -38,7 +38,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<false/>
+	<true/>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Wallshader saves your finished wallpapers to your photo library so you can set them from Settings.</string>
 	<key>UILaunchScreen</key>
@@ -55,6 +55,7 @@
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.data</string>
+				<string>public.content</string>
 			</array>
 			<key>UTTypeDescription</key>
 			<string>Wallshader Wallpaper</string>

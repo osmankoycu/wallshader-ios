@@ -1,8 +1,25 @@
 import ImageIO
+import QuickLook
 import ShaderCore
 import SwiftUI
 import UIKit
 import WallshaderModel
+
+/// QLPreviewController wrapper for the --ql-probe hook.
+final class QLProbeController: QLPreviewController, QLPreviewControllerDataSource {
+    private let fileURL: URL
+    init(fileURL: URL) {
+        self.fileURL = fileURL
+        super.init(nibName: nil, bundle: nil)
+        dataSource = self
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+    func previewController(_ controller: QLPreviewController,
+                           previewItemAt index: Int) -> QLPreviewItem {
+        fileURL as NSURL
+    }
+}
 
 /// Launch-argument automation (C10): the CLI-shell-can't-screenshot gotcha
 /// applies to simulators too, so `make screens` drives the app with launch
@@ -46,6 +63,10 @@ enum ScreensDriver {
         }
         if args.contains("--gpu-probe") {
             runGPUProbe(app: app)
+            return
+        }
+        if args.contains("--ql-probe") {
+            runQuickLookProbe()
             return
         }
         if args.contains("--strip-probe") {
@@ -154,6 +175,24 @@ enum ScreensDriver {
         watchdog.cancel()
         print("gpu-probe: end")
         exit(0)
+    }
+
+    /// Presents the system QLPreviewController on a generated .wallshader —
+    /// the same preview-extension path Files/Messages use, so a screenshot
+    /// shows whether OUR extension renders (simulator has no code-signing,
+    /// isolating extension mechanics from provisioning).
+    private static func runQuickLookProbe() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let json = #"{"formatVersion":1,"name":"QL Probe","shaderId":"mesh-gradient","params":{"speed":1},"animated":true}"#
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ql-probe.wallshader")
+            try? json.write(to: url, atomically: true, encoding: .utf8)
+            let controller = QLProbeController(fileURL: url)
+            guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let root = scene.keyWindow?.rootViewController else { return }
+            root.present(controller, animated: false)
+        }
     }
 
     /// One shader, one process: renders `shaderId` offscreen at the strip's

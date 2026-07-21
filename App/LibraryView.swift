@@ -33,7 +33,7 @@ struct LibraryView: View {
     // the BACKGROUND and the edit screen opens directly; Done returns to
     // the grid, Cancel discards the document again. Actions run on the
     // sheet's onDismiss (presenting a cover mid-dismissal misfires).
-    private enum PendingNewAction { case shader, photo(URL) }
+    private enum PendingNewAction { case shader, photo(URL), wallshader(URL) }
     private struct EditSession: Identifiable {
         let id: UUID
         let model: EditorModel
@@ -120,6 +120,10 @@ struct LibraryView: View {
                 onShader: { pendingNewAction = .shader; showingNewSheet = false },
                 onPhotoPicked: { url in
                     pendingNewAction = .photo(url)
+                    showingNewSheet = false
+                },
+                onWallshaderPicked: { url in
+                    pendingNewAction = .wallshader(url)
                     showingNewSheet = false
                 })
         }
@@ -678,6 +682,12 @@ struct LibraryView: View {
         pendingNewAction = nil
         guard app.gateAddingDocument() else { return }
         switch action {
+        case .wallshader(let url):
+            // Files hands out security-scoped URLs; the import copies the
+            // recipe (and embedded photo) into the library.
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            app.importWallshader(from: url)
         case .shader:
             let doc = library.createBlank()
             _ = library.assignKind(.procedural, to: doc.id)
@@ -925,10 +935,12 @@ final class DeviceThumbnailStore: ObservableObject {
 private struct NewWallpaperSheet: View {
     let onShader: () -> Void
     let onPhotoPicked: (URL) -> Void
+    let onWallshaderPicked: (URL) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var choosingPhotoSource = false
     @State private var photoItem: PhotosPickerItem?
     @State private var showingFiles = false
+    @State private var showingWallshaderFiles = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -949,22 +961,35 @@ private struct NewWallpaperSheet: View {
                 }
                 .padding(.horizontal, 16)
             } else {
-                HStack(spacing: 12) {
-                    card(title: "Shader",
-                         subtitle: "A generated look: gradients, noise, metaballs and more.",
-                         systemImage: "circle.bottomrighthalf.pattern.checkered",
-                         action: onShader)
-                    card(title: "Photo",
-                         subtitle: "Your own photo, styled by a shader.",
-                         systemImage: "photo",
-                         action: { withAnimation(.easeInOut(duration: 0.15)) { choosingPhotoSource = true } })
+                VStack(spacing: 10) {
+                    HStack(spacing: 12) {
+                        card(title: "Shader",
+                             subtitle: "A generated look: gradients, noise, metaballs and more.",
+                             systemImage: "circle.bottomrighthalf.pattern.checkered",
+                             action: onShader)
+                        card(title: "Photo",
+                             subtitle: "Your own photo, styled by a shader.",
+                             systemImage: "photo",
+                             action: { withAnimation(.easeInOut(duration: 0.15)) { choosingPhotoSource = true } })
+                    }
+                    .frame(height: 150)
+
+                    // The wide thin third row: a shared .wallshader file
+                    // (AirDrop, mail, Files) imported straight into the
+                    // library, Mac parity.
+                    Button {
+                        showingWallshaderFiles = true
+                    } label: {
+                        sourceRow("Import a Wallshader File",
+                                  systemImage: "square.and.arrow.down")
+                    }
+                    .buttonStyle(.plain)
                 }
-                .frame(height: 150)
                 .padding(.horizontal, 16)
             }
             Spacer(minLength: 0)
         }
-        .presentationDetents([.height(250)])
+        .presentationDetents([.height(choosingPhotoSource ? 250 : 312)])
         .presentationDragIndicator(.visible)
         .preferredColorScheme(.dark)
         .onChange(of: photoItem) { _, item in
@@ -984,7 +1009,17 @@ private struct NewWallpaperSheet: View {
                 onPhotoPicked(url)
             }
         }
+        .fileImporter(isPresented: $showingWallshaderFiles,
+                      allowedContentTypes: [Self.wallshaderType]) { result in
+            if case .success(let url) = result {
+                onWallshaderPicked(url)
+            }
+        }
     }
+
+    /// The app's own exported document type (matches Info.plist).
+    private static let wallshaderType =
+        UTType(exportedAs: "com.innovationBox.wallshader.wallpaper")
 
     private func sourceRow(_ title: String, systemImage: String) -> some View {
         HStack(spacing: 12) {

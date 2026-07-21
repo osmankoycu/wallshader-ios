@@ -25,8 +25,13 @@ struct WallshaderIOSApp: App {
                 .environmentObject(app)
                 .preferredColorScheme(.dark)
                 .onOpenURL { url in
-                    // .wallshader arrives via AirDrop / Files / share sheet.
+                    // .wallshader arrives via AirDrop / Files / share
+                    // sheet. With in-place opening declared, a Files tap
+                    // hands us a security-scoped URL — access must be
+                    // wrapped or the read silently fails.
                     guard url.pathExtension.lowercased() == "wallshader" else { return }
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                     app.importWallshader(from: url)
                 }
                 .task { ScreensDriver.runIfRequested(app: app) }
