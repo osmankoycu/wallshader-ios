@@ -353,6 +353,9 @@ struct CenteredScrollRow<Content: View>: View {
                 .frame(minWidth: UIScreen.main.bounds.width)
         }
         .scrollBounceBehavior(.basedOnSize)
+        // The glass press-scale briefly overflows the row — without this
+        // the scroller masks it and the pill looks cropped top/bottom.
+        .scrollClipDisabled()
     }
 }
 
@@ -361,6 +364,11 @@ struct CenteredScrollRow<Content: View>: View {
 /// one band with small labeled dividers between them (Mac's grouping).
 struct AdjustControlsRow: View {
     @ObservedObject var model: EditorModel
+    /// Params live here — without this the rows repaint only on the
+    /// debounced writeback (~0.4s late). Safe now that the pills take
+    /// their selected value as data: the freeze was closure diffing,
+    /// never this observation.
+    @ObservedObject var preview: PreviewModel
     let sections: [EditSection]
     /// Bubbles the ruler's drag state up (the auto-fullscreen hook).
     var onScrubbing: ((Bool) -> Void)? = nil
@@ -435,6 +443,7 @@ struct AdjustControlsRow: View {
                 }
                 .scrollTargetLayout()
             }
+            .scrollClipDisabled()
             .contentMargins(.horizontal,
                             max(0, UIScreen.main.bounds.width / 2 - 31),
                             for: .scrollContent)
@@ -528,7 +537,7 @@ struct AdjustControlsRow: View {
                     range: range, step: step, defaultValue: defaultValue,
                     onCommit: commit, onScrubbing: onScrubbing)
             case .options(let all, let get, let set):
-                OptionPillsRow(all: all, get: get, set: set)
+                OptionPillsRow(all: all, current: get(), set: set)
             default:
                 EmptyView()
             }
@@ -577,7 +586,10 @@ private struct SectionMarker: View {
 /// Shared option pills (enums, ambient shape, photo color mode).
 struct OptionPillsRow: View {
     let all: [String]
-    let get: () -> String
+    /// The selected value rides in as DATA. A `get` closure here froze the
+    /// highlight: SwiftUI treats closure fields as equal when diffing, so
+    /// the row's body was skipped even as the value changed underneath.
+    let current: String
     let set: (String) -> Void
 
     var body: some View {
@@ -588,23 +600,16 @@ struct OptionPillsRow: View {
                     UISelectionFeedbackGenerator().selectionChanged()
                 } label: {
                     // "2x2"/"4x4" style options read wrong capitalized.
-                    let selected = get() == option
-                    Group {
-                        // Glass keeps the pill readable over a fullscreen
-                        // wallpaper; the selected one stays solid white.
-                        if selected {
-                            Text(option.first?.isNumber == true ? option : option.capitalized)
-                                .font(.callout)
-                                .padding(.horizontal, 14).padding(.vertical, 7)
-                                .background(Capsule().fill(.white))
-                        } else {
-                            Text(option.first?.isNumber == true ? option : option.capitalized)
-                                .font(.callout)
-                                .padding(.horizontal, 14).padding(.vertical, 7)
-                                .chromeGlass(in: Capsule())
-                        }
-                    }
-                    .foregroundStyle(selected ? .black : .white)
+                    // The glass pill NEVER changes — selection is the app
+                    // yellow on the label alone (fill/stroke swaps either
+                    // doubled during the transition or froze inside the
+                    // glass snapshot; color-only is the proven path).
+                    let selected = current == option
+                    Text(option.first?.isNumber == true ? option : option.capitalized)
+                        .font(.callout.weight(selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? Color.yellow : .white)
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .chromeGlass(in: Capsule())
                 }
             }
         }
@@ -616,6 +621,7 @@ struct OptionPillsRow: View {
 /// as circles. (The rotation ruler retired; the twist gesture owns it.)
 struct FrameControlsRow: View {
     @ObservedObject var model: EditorModel
+    @ObservedObject var preview: PreviewModel
 
     var body: some View {
         VStack(spacing: 14) {
@@ -656,6 +662,7 @@ struct FrameControlsRow: View {
 /// shaders get an exact-count palette strip over their wells.
 struct ColorControlsRow: View {
     @ObservedObject var model: EditorModel
+    @ObservedObject var preview: PreviewModel
 
     private var colorArrayParam: ShaderSchema.Param? {
         model.schema?.params.first { $0.type == .colorArray }
@@ -674,7 +681,7 @@ struct ColorControlsRow: View {
             if hasColorMode {
                 OptionPillsRow(
                     all: PhotoColorMode.allCases.map(\.rawValue),
-                    get: { currentMode.rawValue },
+                    current: currentMode.rawValue,
                     set: { name in
                         if let mode = PhotoColorMode(rawValue: name) { setMode(mode) }
                     })
@@ -878,6 +885,7 @@ struct ColorControlsRow: View {
 /// live tiles (image tiles from the USER'S photo).
 struct ShaderStyleRow: View {
     @ObservedObject var model: EditorModel
+    @ObservedObject var preview: PreviewModel
     @ObservedObject private var tiles = StripTileStore.shared
 
     var body: some View {
@@ -913,8 +921,6 @@ struct ShaderStyleRow: View {
                 .foregroundStyle(selected ? Color.yellow : .white)
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .chromeGlass(in: Capsule())
-                .overlay(Capsule().strokeBorder(
-                    selected ? Color.yellow : .clear, lineWidth: 1.2))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text(preset.name))

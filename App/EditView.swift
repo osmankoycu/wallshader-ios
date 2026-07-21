@@ -410,15 +410,15 @@ struct EditView: View {
     private var controlsArea: some View {
         switch tab {
         case .shader:
-            ShaderStyleRow(model: model)
+            ShaderStyleRow(model: model, preview: model.preview)
         case .adjust:
-            AdjustControlsRow(model: model,
+            AdjustControlsRow(model: model, preview: model.preview,
                               sections: EditControls.adjustSections(model: model),
                               onScrubbing: { setScrubbing($0) })
         case .frame:
-            FrameControlsRow(model: model)
+            FrameControlsRow(model: model, preview: model.preview)
         case .colors:
-            ColorControlsRow(model: model)
+            ColorControlsRow(model: model, preview: model.preview)
         }
     }
 

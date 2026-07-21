@@ -60,6 +60,7 @@ struct RulerSlider: View {
     /// drawn lines, the snap targets and the haptic detents are always
     /// the same set.
     private var minorStep: Double {
+        guard span > 0 else { return 1 }
         let dense = span / 80
         if let step, step > dense { return step }
         return dense
@@ -302,15 +303,16 @@ struct ControlCircle: View {
             VStack(spacing: 4) {
                 ZStack {
                     // Glass, not a flat 12% white: the circles must stay
-                    // readable over a fullscreen wallpaper. Selected keeps
-                    // the solid white face.
-                    if isSelected {
-                        Circle().fill(Color.white).frame(width: 46, height: 46)
-                    } else {
-                        Color.clear
-                            .frame(width: 46, height: 46)
-                            .chromeGlass(in: Circle())
-                    }
+                    // readable over a fullscreen wallpaper. One identity —
+                    // the glass base persists and the white selected face
+                    // fades over it (an if/else swap crossfaded two
+                    // circles, a visible double image).
+                    Color.clear
+                        .frame(width: 46, height: 46)
+                        .chromeGlass(in: Circle())
+                    Circle().fill(Color.white)
+                        .frame(width: 46, height: 46)
+                        .opacity(isSelected ? 1 : 0)
                     if let tint {
                         Circle().fill(tint).frame(width: 24, height: 24)
                     } else {
