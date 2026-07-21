@@ -130,7 +130,13 @@ struct DetailView: View {
         // The dismiss zoom targets whatever wallpaper is CURRENT — swiping
         // in the pager retargets it, and the grid scrolls along behind
         // (selectedID sync below) so the tile is on screen to land on.
-        .zoomTransition(sourceID: currentID, in: zoomNamespace)
+        // While the editor is up the zoom pair DETACHES — the transition's
+        // scroll-edge handoff (a drag starting on a horizontal scroller's
+        // boundary hands off to the interactive pop) bypasses both the
+        // pinch shield and the disabled edge recognizers, and detaching is
+        // the only lever that reaches it. Outside the editor the pair
+        // stays attached so flick-dismissals keep flying to their tile.
+        .zoomTransition(sourceID: currentID, in: editing ? nil : zoomNamespace)
         .onChange(of: pagerID) { _, id in
             if let id, id != currentID { currentID = id }
         }

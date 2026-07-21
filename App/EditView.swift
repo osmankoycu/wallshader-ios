@@ -115,6 +115,21 @@ struct EditView: View {
                 .ignoresSafeArea()
             }
 
+            // Every pinch in the editor lands HERE (except the Frame
+            // canvas, which sits above and owns its own touches): outside
+            // Frame it toggles slot <-> fullscreen; in Frame it does
+            // nothing — but by recognizing it still STARVES the detail
+            // zoom's pinch-to-grid, so no gesture can ever close the
+            // editor. Cancel/Done are the only exits (Photos parity).
+            EditPinchShield(isFitToggle: tab != .frame) { scale in
+                if scale > 1.08, !zoomed {
+                    setZoomed(true)
+                } else if scale < 0.92, zoomed {
+                    setZoomed(false)
+                }
+            }
+            .ignoresSafeArea()
+
             // Framing gestures + thirds grid follow the PREVIEW's rect —
             // the whole screen in fullscreen, the slot otherwise. Sits
             // UNDER the chrome so buttons stay tappable in Frame mode.
@@ -164,9 +179,6 @@ struct EditView: View {
         }
         .preferredColorScheme(.dark)
         .statusBarHidden()
-        // Binary fit toggle: pinch out anywhere (outside Frame, whose pinch
-        // means photo scale) → fullscreen; pinch in → back to the slot.
-        .simultaneousGesture(zoomPinch)
         .onPreferenceChange(EditSlotAnchorKey.self) { anchor in
             localSlotAnchor = anchor
         }
@@ -190,18 +202,6 @@ struct EditView: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidCloseUndoGroup)) { _ in refreshUndoState() }
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in refreshUndoState() }
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { _ in refreshUndoState() }
-    }
-
-    private var zoomPinch: some Gesture {
-        MagnificationGesture()
-            .onEnded { value in
-                guard tab != .frame, Double(value).isFinite else { return }
-                if value > 1.08, !zoomed {
-                    setZoomed(true)
-                } else if value < 0.92, zoomed {
-                    setZoomed(false)
-                }
-            }
     }
 
     // MARK: - Header v2 (tiny Cancel/Done row + tool row)
@@ -446,6 +446,130 @@ struct EditView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .chromeGlass(in: Capsule())
+    }
+}
+
+/// The editor's pinch owner. A UIKit recognizer whose delegate forces
+/// every recognizer outside this view (the detail zoom's interactive
+/// pinch-to-grid, the nav edge swipe) to wait for it — and it never
+/// fails, so no gesture can dismiss the editor. Outside the Frame tab
+/// the recognized pinch drives the binary fit toggle.
+private struct EditPinchShield: UIViewRepresentable {
+    var isFitToggle: Bool
+    var onPinchEnded: (CGFloat) -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = ShieldView()
+        view.backgroundColor = .clear
+        // Edge swipes never reach OUR recognizers — the system gates
+        // edge-originating touches and claims them first — so while the
+        // editor lives, the nav stack's edge-pop recognizers are switched
+        // OFF outright (re-enabled in dismantle when the editor closes).
+        view.onAttach = { [weak coordinator = context.coordinator, weak view] in
+            guard let coordinator, let view else { return }
+            coordinator.disableSystemDismiss(from: view)
+        }
+        let pinch = UIPinchGestureRecognizer(target: context.coordinator,
+                                             action: #selector(Coordinator.pinch(_:)))
+        // A greedy do-nothing pan: the nav stack's EDGE SWIPE is a
+        // one-finger gesture the pinch can't starve (it fails on single
+        // touches, releasing the edge pan). This pan claims every
+        // one-finger drag on the canvas instead, so no swipe can pop the
+        // editor either — Cancel/Done stay the only exits.
+        let pan = UIPanGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.pan(_:)))
+        for recognizer in [pinch, pan] as [UIGestureRecognizer] {
+            recognizer.delegate = context.coordinator
+            view.addGestureRecognizer(recognizer)
+        }
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.isFitToggle = isFitToggle
+        context.coordinator.onPinchEnded = onPinchEnded
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isFitToggle: isFitToggle, onPinchEnded: onPinchEnded)
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.restoreSystemDismiss()
+    }
+
+    /// Reports when it lands in a window, so the coordinator can find the
+    /// navigation controller in the responder chain.
+    final class ShieldView: UIView {
+        var onAttach: (() -> Void)?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil { onAttach?() }
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var isFitToggle: Bool
+        var onPinchEnded: (CGFloat) -> Void
+
+        init(isFitToggle: Bool, onPinchEnded: @escaping (CGFloat) -> Void) {
+            self.isFitToggle = isFitToggle
+            self.onPinchEnded = onPinchEnded
+        }
+
+        @objc func pinch(_ recognizer: UIPinchGestureRecognizer) {
+            guard recognizer.state == .ended, isFitToggle,
+                  recognizer.scale.isFinite else { return }
+            onPinchEnded(recognizer.scale)
+        }
+
+        @objc func pan(_ recognizer: UIPanGestureRecognizer) {
+            // Intentionally empty: recognizing is the whole job.
+        }
+
+        // MARK: Edge-pop suppression
+
+        private var disabledRecognizers: [(UIGestureRecognizer, Bool)] = []
+
+        func disableSystemDismiss(from view: UIView) {
+            guard disabledRecognizers.isEmpty, let window = view.window else { return }
+            // The pop/dismiss machinery is SCATTERED: the edge pop sits on
+            // the nav container, but a SECOND parallax pan (the horizontal
+            // scroll-edge handoff) plus the content-swipe dismiss live on
+            // the pushed page's own hosting view (found via a full window
+            // census on hardware). Sweep the whole window by class name.
+            var targets: [UIGestureRecognizer] = []
+            func sweep(_ v: UIView) {
+                for recognizer in v.gestureRecognizers ?? [] {
+                    let name = String(describing: Swift.type(of: recognizer))
+                    if recognizer is UIScreenEdgePanGestureRecognizer
+                        || name.contains("ParallaxTransition")
+                        || name.contains("ContentSwipeDismiss") {
+                        targets.append(recognizer)
+                    }
+                }
+                for sub in v.subviews { sweep(sub) }
+            }
+            sweep(window)
+            for recognizer in targets where recognizer.view !== view && recognizer.isEnabled {
+                disabledRecognizers.append((recognizer, true))
+                recognizer.isEnabled = false
+            }
+        }
+
+        func restoreSystemDismiss() {
+            for (recognizer, wasEnabled) in disabledRecognizers {
+                recognizer.isEnabled = wasEnabled
+            }
+            disabledRecognizers = []
+        }
+
+        nonisolated func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+            other.view !== gestureRecognizer.view
+        }
     }
 }
 
