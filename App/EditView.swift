@@ -1,13 +1,18 @@
+import PhotosUI
 import ShaderCore
 import SwiftUI
 import UIKit
 import WallshaderModel
 
-/// The EDIT screen — modeled on the iOS Photos editor: Cancel/Done pills,
-/// undo/redo, the selected category as a big caps title, full-bleed
-/// preview (with direct pinch/rotate/pan composition on photo documents),
-/// then bottom-up: ruler/controls for the selected sub-control, the
-/// sub-control row, and the main-category tab pill.
+/// The EDIT screen — modeled on the iOS Photos editor. Header v2: tiny
+/// Cancel/Done capsules flank the Dynamic Island (Done lights up yellow
+/// once the session is dirty; Cancel morphs into a Discard Changes panel),
+/// with undo/redo, the small caps title and the fit + play/pause (or
+/// photo-replace) circles on the second row. The preview is a slot the
+/// wallpaper layer sits in — pinch or the fit button toggles it between
+/// the slot and FULL SCREEN (binary, no free zoom), with all editor UI
+/// hovering above. Bottom-up: controls for the selected tab, then the
+/// compact category bar.
 struct EditView: View {
     @ObservedObject var model: EditorModel
     /// Creation flow (+ sheet): Cancel discards the freshly created
@@ -20,6 +25,8 @@ struct EditView: View {
     /// Drives the morph choreography in hero mode: the header arrives
     /// from the top, controls and tab bar from the bottom.
     var revealed: Bool = true
+    /// Hero mode: the owner's hero layer follows this (slot ↔ fullscreen).
+    var zoomedBinding: Binding<Bool>? = nil
     var onClose: (() -> Void)? = nil
     @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -45,61 +52,129 @@ struct EditView: View {
     @State private var entrySnapshot: WallpaperDocument?
     @State private var canUndo = false
     @State private var canRedo = false
+    /// Creation flow owns its own zoom state (no external hero layer).
+    @State private var localZoomed = false
+    @State private var localSlotAnchor: Anchor<CGRect>?
+    @State private var showingPhotoReplace = false
+    /// Slider-drag auto-fullscreen (experimental): tracks that WE zoomed,
+    /// so release can restore — a user-chosen fullscreen is never touched.
+    @State private var autoZoomed = false
 
-    private var tabs: [Tab] {
-        model.document?.kind == .imageBased
-            ? [.shader, .adjust, .frame, .colors]
-            : [.shader, .adjust, .colors]
+    private static let zoomSpring = Animation.spring(response: 0.42, dampingFraction: 0.86)
+
+    /// Every shader carries the full sizing group (scale/rotation/offset/
+    /// fit), so Frame applies to procedural wallpapers too.
+    private var tabs: [Tab] { [.shader, .adjust, .frame, .colors] }
+
+    private var zoomed: Bool { zoomedBinding?.wrappedValue ?? localZoomed }
+
+    private func setZoomed(_ value: Bool) {
+        withAnimation(Self.zoomSpring) {
+            if let zoomedBinding {
+                zoomedBinding.wrappedValue = value
+            } else {
+                localZoomed = value
+            }
+        }
+    }
+
+    /// Anything to walk back this session? (Undo burst registers on the
+    /// FIRST change, so this beats the debounced document compare.)
+    private var isDirty: Bool {
+        if canUndo { return true }
+        if let entrySnapshot, let doc = model.document, doc != entrySnapshot { return true }
+        return false
     }
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        GeometryReader { outer in
+            let topInset = outer.safeAreaInsets.top
+            let bottomInset = outer.safeAreaInsets.bottom
+            ZStack {
+            // Hero mode: the owner hosts the black backdrop UNDER its hero
+            // layer, so the fullscreen-fit wallpaper can show through with
+            // this chrome hovering on top.
+            (heroMode ? Color.clear : Color.black).ignoresSafeArea()
+
+            if !heroMode {
+                // Creation flow's own wallpaper layer, same architecture
+                // as the detail hero: one live view flying slot ↔ full.
+                GeometryReader { proxy in
+                    let full = CGRect(origin: .zero, size: proxy.size)
+                    let slotState = !zoomed && localSlotAnchor != nil
+                    let rect = slotState ? proxy[localSlotAnchor!] : full
+                    PreviewMetalView(model: model.preview,
+                                     mode: app.previewsPaused ? .frozen : .live)
+                        .aspectRatio(model.selectedDevice.canonicalAspect,
+                                     contentMode: .fit)
+                        .editSlotDressing(active: slotState)
+                        .frame(width: rect.width, height: rect.height)
+                        .position(x: rect.midX, y: rect.midY)
+                        .allowsHitTesting(false)
+                }
+                .ignoresSafeArea()
+            }
+
+            // Framing gestures + thirds grid follow the PREVIEW's rect —
+            // the whole screen in fullscreen, the slot otherwise. Sits
+            // UNDER the chrome so buttons stay tappable in Frame mode.
+            if tab == .frame {
+                GeometryReader { proxy in
+                    let full = CGRect(origin: .zero, size: proxy.size)
+                    let rect = (!zoomed && localSlotAnchor != nil)
+                        ? proxy[localSlotAnchor!] : full
+                    CompositionGestureLayer(model: model)
+                        .frame(width: rect.width, height: rect.height)
+                        .position(x: rect.midX, y: rect.midY)
+                }
+                .ignoresSafeArea()
+            }
 
             VStack(spacing: 0) {
                 header
                     .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                    // Into the top safe area: the capsules ride the Dynamic
+                    // Island's line (the status bar is hidden here).
+                    .padding(.top, topInset > 0 ? 14 : 10)
                     .offset(y: revealed ? 0 : -56)
 
                 GeometryReader { geo in
-                    ZStack {
-                        if heroMode {
-                            Color.clear
-                                .aspectRatio(model.selectedDevice.canonicalAspect,
-                                             contentMode: .fit)
-                                .frame(width: geo.size.width, height: geo.size.height)
-                                .anchorPreference(key: EditSlotAnchorKey.self,
-                                                  value: .bounds) { $0 }
-                        } else {
-                            PreviewMetalView(model: model.preview,
-                                             mode: app.previewsPaused ? .frozen : .live)
-                                .aspectRatio(model.selectedDevice.canonicalAspect,
-                                             contentMode: .fit)
-                                .frame(width: geo.size.width, height: geo.size.height)
-                        }
-                        // Like Photos' Crop: framing gestures live in the
-                        // Frame tab only — no accidental re-framing while
-                        // scrubbing an unrelated slider.
-                        if tab == .frame {
-                            CompositionGestureLayer(model: model)
-                        }
-                    }
+                    Color.clear
+                        .aspectRatio(model.selectedDevice.canonicalAspect,
+                                     contentMode: .fit)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .anchorPreference(key: EditSlotAnchorKey.self,
+                                          value: .bounds) { $0 }
                 }
                 .padding(.vertical, 10)
 
                 Group {
                     controlsArea
-                        .frame(minHeight: 132)
+                        .frame(height: 138)
                     tabBar
-                        .padding(.bottom, 8)
                         .padding(.top, 6)
+                        // Down into the bottom safe area, stopping just
+                        // above the home indicator.
+                        .padding(.bottom, bottomInset > 0 ? 16 : 10)
                 }
                 .offset(y: revealed ? 0 : 56)
+            }
+            .ignoresSafeArea()
             }
         }
         .preferredColorScheme(.dark)
         .statusBarHidden()
+        // Binary fit toggle: pinch out anywhere (outside Frame, whose pinch
+        // means photo scale) → fullscreen; pinch in → back to the slot.
+        .simultaneousGesture(zoomPinch)
+        .onPreferenceChange(EditSlotAnchorKey.self) { anchor in
+            localSlotAnchor = anchor
+        }
+        .sheet(isPresented: $showingPhotoReplace) {
+            PhotoReplaceSheet { url in
+                model.importImage(url: url)
+            }
+        }
         .onAppear {
             entrySnapshot = model.document
             model.undoManager = undoManager
@@ -117,23 +192,35 @@ struct EditView: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { _ in refreshUndoState() }
     }
 
-    // MARK: - Header (Cancel / undo-redo / title / Done)
+    private var zoomPinch: some Gesture {
+        MagnificationGesture()
+            .onEnded { value in
+                guard tab != .frame, Double(value).isFinite else { return }
+                if value > 1.08, !zoomed {
+                    setZoomed(true)
+                } else if value < 0.92, zoomed {
+                    setZoomed(false)
+                }
+            }
+    }
+
+    // MARK: - Header v2 (tiny Cancel/Done row + tool row)
 
     private var header: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
+            // Row 1: small capsules flanking the Dynamic Island.
             HStack {
-                Button("Cancel") { cancel() }
-                    .font(.body.weight(.medium))
-                    .padding(.horizontal, 18).padding(.vertical, 9)
-                    .chromeGlass(in: Capsule())
+                // Column-aligned with row 2: Cancel's right edge meets the
+                // undo/redo group's right edge, Done's left edge meets the
+                // circles' left edge.
+                cancelControl
+                    .frame(width: 88, alignment: .trailing)
                 Spacer()
-                Button("Done") { done() }
-                    .font(.body.weight(.semibold))
-                    .padding(.horizontal, 18).padding(.vertical, 9)
-                    .chromeGlass(in: Capsule())
+                doneButton
+                    .frame(width: 88, alignment: .leading)
             }
-            .foregroundStyle(.white)
 
+            // Row 2: undo/redo left, title centered, fit + mode right.
             HStack {
                 HStack(spacing: 0) {
                     Button {
@@ -141,7 +228,7 @@ struct EditView: View {
                         model.reloadEditor()
                     } label: {
                         Image(systemName: "arrow.uturn.backward")
-                            .frame(width: 44, height: 36)
+                            .frame(width: 44, height: 40)
                     }
                     .disabled(!canUndo)
                     Button {
@@ -149,26 +236,136 @@ struct EditView: View {
                         model.reloadEditor()
                     } label: {
                         Image(systemName: "arrow.uturn.forward")
-                            .frame(width: 44, height: 36)
+                            .frame(width: 44, height: 40)
                     }
                     .disabled(!canRedo)
                 }
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.white)
                 .chromeGlass(in: Capsule())
+                .frame(width: 88, alignment: .leading)
 
                 Spacer()
 
                 Text(tab.rawValue.uppercased())
-                    .font(.subheadline.weight(.medium))
-                    .kerning(1.5)
+                    .font(.caption.weight(.semibold))
+                    .kerning(1.4)
                     .foregroundStyle(.white.opacity(0.85))
 
                 Spacer()
 
-                // Balance the undo cluster so the title stays centered.
-                Color.clear.frame(width: 88, height: 36)
+                HStack(spacing: 8) {
+                    headerCircle(zoomed ? "arrow.down.right.and.arrow.up.left"
+                                        : "arrow.up.left.and.arrow.down.right",
+                                 label: zoomed ? "Shrink Preview" : "Fit to Screen") {
+                        setZoomed(!zoomed)
+                    }
+                    modeCircle
+                }
+                .frame(width: 88, alignment: .trailing)
             }
+        }
+    }
+
+    private var cancelControl: some View {
+        Group {
+            if isDirty {
+                // The button MORPHS into the unsaved-changes panel, the
+                // same pattern as the detail screen's delete button.
+                Menu {
+                    Section {
+                        Button(role: .destructive) {
+                            cancel()
+                        } label: { Label("Discard Changes", systemImage: "trash") }
+                    } header: {
+                        Text("Your changes haven't been saved.")
+                    }
+                } label: {
+                    smallCapsuleLabel("Cancel")
+                }
+            } else {
+                Button { cancel() } label: {
+                    smallCapsuleLabel("Cancel")
+                }
+            }
+        }
+        .accessibilityLabel("Cancel")
+    }
+
+    private var doneButton: some View {
+        // Photos: Done sleeps until the session is dirty, then lights up
+        // in the system yellow. Creation flow keeps it live throughout —
+        // there the new wallpaper itself is the change.
+        Button { done() } label: {
+            Group {
+                if isDirty {
+                    Text("Done")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 13).padding(.vertical, 6)
+                        .background(Capsule().fill(Color.yellow))
+                } else {
+                    smallCapsuleLabel("Done")
+                        .opacity(onCancel != nil ? 1 : 0.5)
+                }
+            }
+        }
+        .disabled(!isDirty && onCancel == nil)
+        .accessibilityLabel("Done")
+    }
+
+    private func smallCapsuleLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 13).padding(.vertical, 6)
+            .chromeGlass(in: Capsule())
+    }
+
+    private func headerCircle(_ systemImage: String, label: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .chromeGlass(in: Circle())
+        }
+        .accessibilityLabel(Text(label))
+    }
+
+    /// The right slot next to fit: play/pause for animatable shaders (the
+    /// live/still decision lives HERE now, not on the detail bar), the
+    /// photo-replace picker for photo documents, empty otherwise.
+    @ViewBuilder
+    private var modeCircle: some View {
+        if model.document?.kind == .imageBased {
+            headerCircle("photo", label: "Replace Photo") {
+                showingPhotoReplace = true
+            }
+        } else if model.document?.shaderIsAnimatable == true {
+            let animated = model.editingVariant?.animated ?? false
+            headerCircle(animated ? "pause.fill" : "play.fill",
+                         label: animated ? "Make Still" : "Make Animated") {
+                model.setAnimated(!animated)
+                UISelectionFeedbackGenerator().selectionChanged()
+            }
+        } else {
+            Color.clear.frame(width: 40, height: 40)
+        }
+    }
+
+    /// Experimental: a slider drag in the SMALL state zooms the preview
+    /// fullscreen for the duration of the scrub. A fullscreen the user
+    /// chose (fit button / pinch) is never auto-exited.
+    private func setScrubbing(_ active: Bool) {
+        if active {
+            guard !zoomed else { return }
+            autoZoomed = true
+            setZoomed(true)
+        } else if autoZoomed {
+            autoZoomed = false
+            if zoomed { setZoomed(false) }
         }
     }
 
@@ -199,6 +396,7 @@ struct EditView: View {
     }
 
     private func close() {
+        if zoomed { setZoomed(false) }
         if let onClose {
             onClose()
         } else {
@@ -214,7 +412,9 @@ struct EditView: View {
         case .shader:
             ShaderStyleRow(model: model)
         case .adjust:
-            AdjustControlsRow(model: model, controls: EditControls.adjustControls(model: model))
+            AdjustControlsRow(model: model,
+                              sections: EditControls.adjustSections(model: model),
+                              onScrubbing: { setScrubbing($0) })
         case .frame:
             FrameControlsRow(model: model)
         case .colors:
@@ -222,31 +422,45 @@ struct EditView: View {
         }
     }
 
+    // Compact v2: no indicator triangle — the active item simply reads in
+    // the app yellow, tighter cell/bar metrics.
     private var tabBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             ForEach(tabs, id: \.self) { item in
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { tab = item }
                 } label: {
-                    VStack(spacing: 4) {
-                        Triangle()
-                            .fill(tab == item ? Color.yellow : .clear)
-                            .frame(width: 8, height: 5)
+                    VStack(spacing: 3) {
                         Image(systemName: item.systemImage)
-                            .font(.system(size: 19))
+                            .font(.system(size: 18))
                         Text(item.rawValue)
-                            .font(.system(size: 11))
+                            .font(.system(size: 10))
                     }
-                    .foregroundStyle(tab == item ? .white : .white.opacity(0.55))
-                    .frame(width: 74)
+                    .foregroundStyle(tab == item ? Color.yellow : .white.opacity(0.55))
+                    .frame(width: 56)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(item.rawValue))
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
         .chromeGlass(in: Capsule())
+    }
+}
+
+/// Rounded corners + the grid tiles' rim light at HALF opacity, applied
+/// to the wallpaper layer only while it sits in the edit slot. Fullscreen
+/// drops both; shrinking brings them back (animates with the zoom spring).
+extension View {
+    func editSlotDressing(active: Bool) -> some View {
+        clipShape(RoundedRectangle(cornerRadius: active ? 18 : 0))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18)
+                    .strokeBorder(.white.opacity(0.1), lineWidth: 1)
+                    .blendMode(.plusLighter)
+                    .opacity(active ? 1 : 0)
+            }
     }
 }
 
@@ -259,13 +473,67 @@ struct EditSlotAnchorKey: PreferenceKey {
     }
 }
 
-private struct Triangle: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
+/// The photo-replace picker: the creation sheet's source rows, reused for
+/// swapping the photo under the current edit session.
+private struct PhotoReplaceSheet: View {
+    let onPick: (URL) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var photoItem: PhotosPickerItem?
+    @State private var showingFiles = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Replace Photo")
+                .font(.headline)
+                .padding(.top, 18)
+            VStack(spacing: 10) {
+                PhotosPicker(selection: $photoItem, matching: .images) {
+                    sourceRow("Photo Library", systemImage: "photo.on.rectangle")
+                }
+                Button {
+                    showingFiles = true
+                } label: {
+                    sourceRow("Files", systemImage: "folder")
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            Spacer(minLength: 0)
+        }
+        .presentationDetents([.height(210)])
+        .presentationDragIndicator(.visible)
+        .preferredColorScheme(.dark)
+        .onChange(of: photoItem) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self) {
+                    let tmp = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("picked-\(UUID().uuidString)")
+                    try? data.write(to: tmp)
+                    onPick(tmp)
+                }
+                photoItem = nil
+                dismiss()
+            }
+        }
+        .fileImporter(isPresented: $showingFiles, allowedContentTypes: [.image]) { result in
+            if case .success(let url) = result {
+                onPick(url)
+                dismiss()
+            }
+        }
+    }
+
+    private func sourceRow(_ title: String, systemImage: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .frame(width: 28)
+            Text(title)
+            Spacer()
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.08)))
     }
 }

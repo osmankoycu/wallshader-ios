@@ -24,6 +24,9 @@ struct DetailView: View {
     /// simply APPEARS at the end — no reverse slide (feedback: the chrome
     /// only becomes visible once the wallpaper is fullscreen again).
     @State private var closingEditor = false
+    /// Binary fullscreen-fit inside the editor: the hero flies slot ↔ full
+    /// while all editor chrome hovers above it.
+    @State private var editorZoomed = false
     @State private var editSlotAnchor: Anchor<CGRect>?
     @StateObject private var models = ModelCache()
     @State private var editing = false
@@ -118,7 +121,10 @@ struct DetailView: View {
         // The dismiss zoom targets whatever wallpaper is CURRENT — swiping
         // in the pager retargets it, and the grid scrolls along behind
         // (selectedID sync below) so the tile is on screen to land on.
-        .zoomTransition(sourceID: currentID, in: zoomNamespace)
+        // While the editor is up, the zoom pair is DETACHED: its
+        // interactive pinch-to-grid was swallowing the Frame tab's
+        // two-finger framing gestures.
+        .zoomTransition(sourceID: currentID, in: editing ? nil : zoomNamespace)
         .onChange(of: pagerID) { _, id in
             if let id, id != currentID { currentID = id }
         }
@@ -138,28 +144,30 @@ struct DetailView: View {
             }
         }
         // The editor is an in-place layer, not a presentation. Its preview
-        // area is an EMPTY slot: the single hero layer below carries the
-        // actual wallpaper, so "another image arriving" is structurally
+        // area is an EMPTY slot: the single hero layer carries the actual
+        // wallpaper, so "another image arriving" is structurally
         // impossible — the one on screen simply shrinks into place while
-        // the UI cross-fades (the Photos edit morph).
+        // the UI cross-fades (the Photos edit morph). Layer order matters:
+        // black backdrop UNDER the hero, editor chrome ABOVE it — that's
+        // what lets the fullscreen-fit toggle show the wallpaper edge to
+        // edge with the whole editor UI hovering on top.
         .overlay {
             if editing {
-                EditView(model: currentModel, heroMode: true,
-                         revealed: editorRevealed,
-                         onClose: { closeEditor() })
-                .opacity(editorRevealed ? 1 : 0)
+                Color.black.ignoresSafeArea()
+                    .opacity(editorRevealed ? 1 : 0)
             }
         }
-        .onPreferenceChange(EditSlotAnchorKey.self) { editSlotAnchor = $0 }
         .overlay {
             if heroActive {
                 GeometryReader { proxy in
                     let full = CGRect(origin: .zero, size: proxy.size)
-                    let rect = (editorRevealed && editing && editSlotAnchor != nil)
-                        ? proxy[editSlotAnchor!] : full
+                    let slotState = editorRevealed && editing && !editorZoomed
+                        && editSlotAnchor != nil
+                    let rect = slotState ? proxy[editSlotAnchor!] : full
                     PreviewMetalView(model: currentModel.preview, mode: .live)
                         .aspectRatio(currentModel.selectedDevice.canonicalAspect,
                                      contentMode: .fit)
+                        .editSlotDressing(active: slotState)
                         .frame(width: rect.width, height: rect.height)
                         .position(x: rect.midX, y: rect.midY)
                         .allowsHitTesting(false)
@@ -167,6 +175,16 @@ struct DetailView: View {
                 .ignoresSafeArea()
             }
         }
+        .overlay {
+            if editing {
+                EditView(model: currentModel, heroMode: true,
+                         revealed: editorRevealed,
+                         zoomedBinding: $editorZoomed,
+                         onClose: { closeEditor() })
+                .opacity(editorRevealed ? 1 : 0)
+            }
+        }
+        .onPreferenceChange(EditSlotAnchorKey.self) { editSlotAnchor = $0 }
         .onChange(of: editSlotAnchor != nil) { _, hasSlot in
             // Reveal only once the slot is measured: the hero then animates
             // to a known target instead of guessing a frame early.
@@ -243,6 +261,7 @@ struct DetailView: View {
             heroActive = false
             editSlotAnchor = nil
             closingEditor = false
+            editorZoomed = false
         }
     }
 
