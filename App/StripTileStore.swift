@@ -53,7 +53,6 @@ final class StripTileStore: ObservableObject {
                     shaderId: shaderId, params: params,
                     pixelWidth: 192, pixelHeight: 120, pixelRatio: 2,
                     timeSeconds: 0, texture: texture)
-                print("strip-tile ok \(shaderId)")
             } catch {
                 print("strip-tile FAIL \(shaderId): \(error)")
                 image = nil
