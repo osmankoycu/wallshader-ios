@@ -33,6 +33,9 @@ struct PreviewMetalView: UIViewRepresentable {
     func updateUIView(_ view: MetalHostView, context: Context) {
         view.model = model
         view.mode = mode
+        // A shader switch can move the view in/out of the pinned-drawable
+        // path (fragCoord pair) — re-derive the drawable size.
+        view.setNeedsLayout()
         view.setNeedsRender()
     }
 
@@ -130,7 +133,19 @@ struct PreviewMetalView: UIViewRepresentable {
             super.layoutSubviews()
             let scale = window?.screen.scale ?? UIScreen.main.scale
             metalLayer.contentsScale = scale
-            let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+            // The fragCoord-positioned pair (dithering family) renders its
+            // pattern in DEVICE pixels, so a smaller drawable means a
+            // visibly different pattern per surface (grid vs detail vs
+            // edit slot). For those shaders the drawable is pinned to the
+            // CANONICAL wallpaper pixels and the layer scales the image —
+            // every surface then shows the same wallpaper, just smaller.
+            let size: CGSize
+            if let model, ShaderRenderer.fragCoordPositionedShaders.contains(model.shaderId) {
+                let px = model.emulatedPixels.pixels
+                size = CGSize(width: CGFloat(px.x), height: CGFloat(px.y))
+            } else {
+                size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+            }
             if size.width > 0, size.height > 0, metalLayer.drawableSize != size {
                 metalLayer.drawableSize = size
                 setNeedsRender()
