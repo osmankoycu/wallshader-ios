@@ -51,13 +51,30 @@ struct DetailView: View {
     @State private var shareItem: URL?
     @State private var exportItem: URL?
 
+    /// Where currentID last sat in the pager — the landing spot if the
+    /// open document is deleted out from under us by a sync pass.
+    @State private var lastPagedIndex = 0
+
     init(documentID: UUID, zoomNamespace: Namespace.ID? = nil) {
         _currentID = State(initialValue: documentID)
         self.zoomNamespace = zoomNamespace
     }
 
     private func model(for id: UUID) -> EditorModel {
-        models.model(for: id, undoManager: undoManager)
+        models.model(for: id)
+    }
+
+    /// Keep the current page plus the swipe window (±2 covers the pager's
+    /// prefetched neighbors); release everything further — each photo
+    /// model pins a full-resolution texture.
+    private func trimModelCache(around id: UUID) {
+        let docs = pagedDocuments
+        guard let index = docs.firstIndex(where: { $0.id == id }) else {
+            models.trim(keeping: [id])
+            return
+        }
+        let window = docs[max(0, index - 2)...min(docs.count - 1, index + 2)]
+        models.trim(keeping: Set(window.map(\.id)).union([id]))
     }
 
     private var currentModel: EditorModel { model(for: currentID) }
@@ -145,6 +162,26 @@ struct DetailView: View {
         .onChange(of: currentID) { _, id in
             app.selectedID = id
             if pagerID != id { pagerID = id }
+            trimModelCache(around: id)
+            lastPagedIndex = pagedDocuments.firstIndex { $0.id == id } ?? lastPagedIndex
+        }
+        // The open document can vanish UNDER us (an iCloud sync pass
+        // replaying another device's delete): unlike the local delete
+        // path nothing reassigns currentID, and the pager would render
+        // black forever. Land on the nearest surviving neighbor.
+        .onChange(of: pagedDocuments.map(\.id)) { _, ids in
+            guard !ids.contains(currentID) else { return }
+            if ids.isEmpty {
+                dismiss()
+            } else {
+                currentID = ids[min(lastPagedIndex, ids.count - 1)]
+            }
+        }
+        // Full-res photo textures are the heaviest thing the app holds:
+        // under memory pressure keep only the page on screen.
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            models.trim(keeping: [currentID])
         }
         .task {
             // Position the pager on the pushed wallpaper once layout
@@ -555,7 +592,6 @@ struct DetailView: View {
                                     saveError: $saveError)
 
                 Button {
-                    currentModel.undoManager = undoManager
                     openEditor()
                 } label: {
                     Image(systemName: "slider.horizontal.3")
@@ -610,8 +646,12 @@ struct DetailView: View {
     // MARK: - Actions
 
     private func share() {
-        guard let url = SaveWallpaperButton.renderTemporaryPNG(model: currentModel) else { return }
-        shareItem = url
+        // Off-main render: the full-res frame + PNG encode froze the UI
+        // when run synchronously here.
+        let model = currentModel
+        Task {
+            shareItem = await SaveWallpaperButton.renderTemporaryPNG(model: model)
+        }
     }
 
     /// The portable .wallshader file (recipe + embedded photo) through
@@ -646,6 +686,14 @@ struct DetailView: View {
         if let copy = library.duplicate(currentID) {
             let id = copy.id
             undoManager?.registerUndo(withTarget: library) { lib in lib.delete(id) }
+            // A frozen shelf scope (Favorites) must ADMIT the copy before
+            // it becomes current, or the whole pager goes black paging to
+            // an id outside its scope.
+            if var scope = app.detailScopeIDs,
+               let anchor = scope.firstIndex(of: currentID) {
+                scope.insert(id, at: anchor + 1)
+                app.detailScopeIDs = scope
+            }
             currentID = copy.id
         }
     }
@@ -793,7 +841,11 @@ private struct ExportRendererBox: @unchecked Sendable {
 
 /// One EditorModel per visited document, created exactly once — creating
 /// models during view-body evaluation (and stashing them via async state
-/// writes) duplicated Combine subscriptions per render pass.
+/// writes) duplicated Combine subscriptions per render pass. BOUNDED:
+/// each model of a photo document pins a full-resolution MTLTexture
+/// (tens of MB), so callers trim to a window around the current page —
+/// an unbounded cache jetsams the app after enough swiping. (Undo
+/// managers are session-scoped and attached by EditView, never here.)
 @MainActor
 final class ModelCache: ObservableObject {
     private var cache: [UUID: EditorModel] = [:]
@@ -802,13 +854,17 @@ final class ModelCache: ObservableObject {
         cache[id] = nil
     }
 
-    func model(for id: UUID, undoManager: UndoManager?) -> EditorModel {
-        if let existing = cache[id] {
-            existing.undoManager = undoManager
-            return existing
+    /// Drops every cached model except `keeping`. Views retain the models
+    /// they're presenting, so trimming never kills one mid-use.
+    func trim(keeping: Set<UUID>) {
+        for key in cache.keys where !keeping.contains(key) {
+            cache[key] = nil
         }
+    }
+
+    func model(for id: UUID) -> EditorModel {
+        if let existing = cache[id] { return existing }
         let fresh = EditorModel(app: AppModel.shared, documentID: id)
-        fresh.undoManager = undoManager
         cache[id] = fresh
         return fresh
     }

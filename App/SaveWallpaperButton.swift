@@ -15,6 +15,7 @@ struct SaveWallpaperButton: View {
     @State private var choosing = false
     @State private var saving = false
     @State private var shareURL: URL?
+    @State private var pendingPreset: StudioExportPreset?
 
     private var isCurrentDevice: Bool {
         model.selectedDevice == AppModel.currentDevice
@@ -51,11 +52,7 @@ struct SaveWallpaperButton: View {
                 Menu {
                     ForEach(StudioExportPreset.presets(for: model.selectedDevice)) { preset in
                         Button("\(preset.name) — \(preset.width)×\(preset.height)") {
-                            if let url = Self.renderTemporaryPNG(
-                                model: model,
-                                pixels: CGSize(width: preset.width, height: preset.height)) {
-                                shareURL = url
-                            }
+                            pendingPreset = preset
                         }
                     }
                 } label: {
@@ -66,6 +63,13 @@ struct SaveWallpaperButton: View {
                 }
                 .disabled(!(model.document?.isAppliable ?? false))
                 .accessibilityLabel("Export")
+                .task(id: pendingPreset?.id) {
+                    guard let preset = pendingPreset else { return }
+                    shareURL = await Self.renderTemporaryPNG(
+                        model: model,
+                        pixels: CGSize(width: preset.width, height: preset.height))
+                    pendingPreset = nil
+                }
             }
         }
         .confirmationDialog("Save Wallpaper", isPresented: $choosing,
@@ -91,35 +95,58 @@ struct SaveWallpaperButton: View {
                       height: min(native.width, native.height))
     }
 
-    static func renderImage(model: EditorModel, pixels: CGSize) -> CGImage? {
+    /// Sendable box for the detached render: the full-resolution render
+    /// plus PNG encode froze the whole UI on main for seconds on older
+    /// hardware — including the very spinner meant to indicate it.
+    private struct RenderBox: @unchecked Sendable {
+        let offscreen: OffscreenRenderer
+        let texture: MTLTexture?
+        init(renderer: ShaderRenderer, texture: MTLTexture?) {
+            offscreen = OffscreenRenderer(renderer: renderer)
+            self.texture = texture
+        }
+    }
+
+    /// Gathers everything on the main actor, renders detached.
+    static func renderImage(model: EditorModel, pixels: CGSize) async -> CGImage? {
         guard let renderer = model.app.renderer,
               let doc = model.document, let shaderId = doc.shaderId else { return nil }
         model.flushPendingWriteback()
         let params = model.preview.params
-        let texture = model.preview.texture
-        if doc.needsSourceImage && texture == nil { return nil }
+        if doc.needsSourceImage && model.preview.texture == nil { return nil }
         let time = model.preview.isPlaying
             ? model.preview.lastRenderedTimeSeconds
             : Float(params.frame * 0.001)
-        let offscreen = OffscreenRenderer(renderer: renderer)
-        return try? offscreen.renderImage(
-            shaderId: shaderId, params: params,
-            pixelWidth: Int(pixels.width), pixelHeight: Int(pixels.height),
-            pixelRatio: Float(UIScreen.main.scale), timeSeconds: time,
-            texture: texture, ambient: model.preview.ambient)
+        let box = RenderBox(renderer: renderer, texture: model.preview.texture)
+        let ambient = model.preview.ambient
+        let scale = Float(UIScreen.main.scale)
+        return await Task.detached(priority: .userInitiated) { () -> CGImage? in
+            try? box.offscreen.renderImage(
+                shaderId: shaderId, params: params,
+                pixelWidth: Int(pixels.width), pixelHeight: Int(pixels.height),
+                pixelRatio: scale, timeSeconds: time,
+                texture: box.texture, ambient: ambient)
+        }.value
     }
 
-    static func renderTemporaryPNG(model: EditorModel, pixels: CGSize? = nil) -> URL? {
+    static func renderTemporaryPNG(model: EditorModel, pixels: CGSize? = nil) async -> URL? {
         guard let renderer = model.app.renderer else { return nil }
         let target = pixels ?? Self.screenWallpaperPixels
-        guard let image = renderImage(model: model, pixels: target) else { return nil }
+        guard let image = await renderImage(model: model, pixels: target) else { return nil }
         let name = (model.document?.name ?? "Wallpaper")
             .components(separatedBy: CharacterSet(charactersIn: "/:\\")).joined(separator: "-")
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent(name).appendingPathExtension("png")
-        try? FileManager.default.removeItem(at: url)
-        try? OffscreenRenderer(renderer: renderer).writePNG(image, to: url)
-        return url
+        let box = RenderBox(renderer: renderer, texture: nil)
+        return await Task.detached(priority: .userInitiated) { () -> URL? in
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent(name).appendingPathExtension("png")
+            try? FileManager.default.removeItem(at: url)
+            do {
+                try box.offscreen.writePNG(image, to: url)
+                return url
+            } catch {
+                return nil
+            }
+        }.value
     }
 
     // MARK: - Saving
@@ -128,8 +155,8 @@ struct SaveWallpaperButton: View {
         saving = true
         Task { @MainActor in
             defer { saving = false }
-            guard let image = Self.renderImage(model: model,
-                                               pixels: Self.screenWallpaperPixels) else {
+            guard let image = await Self.renderImage(model: model,
+                                                     pixels: Self.screenWallpaperPixels) else {
                 saveError = "Couldn't render this wallpaper."
                 return
             }
