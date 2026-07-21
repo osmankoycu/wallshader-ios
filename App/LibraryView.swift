@@ -89,17 +89,11 @@ struct LibraryView: View {
         grid
             .navigationTitle("Wallshader")
         .sheet(isPresented: $showingShare) { ShareSheet(items: shareURLs) }
-        .sheet(isPresented: $showingNewSheet, onDismiss: runPendingNewAction) {
-            NewWallpaperSheet(
-                onShader: { pendingNewAction = .shader; showingNewSheet = false },
-                onPhotoPicked: { url in
-                    pendingNewAction = .photo(url)
-                    showingNewSheet = false
-                },
-                onWallshaderPicked: { url in
-                    pendingNewAction = .wallshader(url)
-                    showingNewSheet = false
-                })
+        // iPhone only — the iPad presents the same content as a popover
+        // on the + button (below).
+        .sheet(isPresented: Self.isPad ? .constant(false) : $showingNewSheet,
+               onDismiss: runPendingNewAction) {
+            newSheetContent
         }
         .fullScreenCover(item: $editSession, onDismiss: { hiddenNewDocID = nil }) { session in
             EditView(model: session.model, onCancel: {
@@ -132,6 +126,8 @@ struct LibraryView: View {
     /// between rows, AND at the screen edges.
     /// iPad breathes: larger tiles, wider gutters (one structure, two
     /// densities).
+    private static let isPad = UIDevice.current.userInterfaceIdiom == .pad
+
     private static let gridGap: CGFloat =
         UIDevice.current.userInterfaceIdiom == .pad ? 16 : 6
     private static let tileCorner: CGFloat =
@@ -160,6 +156,19 @@ struct LibraryView: View {
         .libraryBottomBar(visible: true, bottomBar)
     }
 
+    private var newSheetContent: some View {
+        NewWallpaperSheet(
+            onShader: { pendingNewAction = .shader; showingNewSheet = false },
+            onPhotoPicked: { url in
+                pendingNewAction = .photo(url)
+                showingNewSheet = false
+            },
+            onWallshaderPicked: { url in
+                pendingNewAction = .wallshader(url)
+                showingNewSheet = false
+            })
+    }
+
     /// ONE bottom bar, a REAL safeAreaBar like the pinned header: the
     /// system draws its progressive blur behind it and seats it at the
     /// default bar position over the home indicator. Browse chrome (pill +
@@ -180,6 +189,13 @@ struct LibraryView: View {
                         .chromeGlass(in: Circle(), tint: .accentColor)
                 }
                 .accessibilityLabel("New Wallpaper")
+                // iPad: the chooser hangs off the + itself instead of an
+                // iPhone bottom sheet.
+                .popover(isPresented: Self.isPad ? $showingNewSheet : .constant(false)) {
+                    newSheetContent
+                        .frame(width: 360, height: 324)
+                        .onDisappear(perform: runPendingNewAction)
+                }
                 .modifier(ChromeSwap(hidden: selecting))
             }
             .padding(.horizontal, 20)
