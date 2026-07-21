@@ -76,9 +76,7 @@ struct SaveWallpaperButton: View {
         } message: {
             Text("Live Photos animate on the Lock Screen when you wake your \(UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone").")
         }
-        .sheet(item: $shareURL) { url in
-            ShareSheet(items: [url])
-        }
+        .sharePopover(item: $shareURL)
     }
 
     // MARK: - Rendering

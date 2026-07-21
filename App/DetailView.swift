@@ -49,6 +49,7 @@ struct DetailView: View {
     @State private var stripTapJump = false
     @State private var showingSizeSheet = false
     @State private var shareItem: URL?
+    @State private var exportItem: URL?
 
     init(documentID: UUID, zoomNamespace: Namespace.ID? = nil) {
         _currentID = State(initialValue: documentID)
@@ -209,11 +210,6 @@ struct DetailView: View {
         .sheet(isPresented: $showingGuide) { GuideSheet() }
         .sheet(isPresented: $showingSizeSheet) {
             ExportSizeSheet(model: currentModel)
-        }
-        // Sheet, not a bare present: a raw UIActivityViewController with
-        // no popover anchor throws on iPad.
-        .sheet(item: $shareItem) { url in
-            ShareSheet(items: [url])
         }
         .alert("Rename Wallpaper", isPresented: $renaming) {
             TextField("Name", text: $renameText)
@@ -420,6 +416,7 @@ struct DetailView: View {
                     .chromeGlass(in: Circle())
             }
             .accessibilityLabel("More")
+            .sharePopover(item: $exportItem)
         }
     }
 
@@ -547,6 +544,7 @@ struct DetailView: View {
     private var bottomBar: some View {
         HStack {
             pillButton(systemImage: "square.and.arrow.up", label: "Share") { share() }
+                .sharePopover(item: $shareItem)
 
             Spacer()
 
@@ -639,7 +637,7 @@ struct DetailView: View {
             saveError = error.localizedDescription
             return
         }
-        shareItem = url
+        exportItem = url
         _ = doc
     }
 

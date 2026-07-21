@@ -216,6 +216,19 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
+extension View {
+    /// iPad's native share look is a POPOVER at the source button — a
+    /// wrapped sheet renders it iPhone-narrow. On iPhone the popover
+    /// adapts back to the plain sheet, so one modifier serves both.
+    func sharePopover(item: Binding<URL?>) -> some View {
+        popover(item: item) { url in
+            let pad = UIDevice.current.userInterfaceIdiom == .pad
+            ShareSheet(items: [url])
+                .frame(width: pad ? 400 : nil, height: pad ? 560 : nil)
+        }
+    }
+}
+
 extension URL: Identifiable {
     public var id: String { absoluteString }
 }
