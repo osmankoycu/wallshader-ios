@@ -36,6 +36,9 @@ final class AppModel: ObservableObject {
     /// Screens-probe only: presents GuideSheet over the root
     /// (`--screen guide`) — the real sheet rides DetailView state.
     @Published var showingGuideProbe = false
+    /// A failed .wallshader import must SAY so (AirDrop/Files taps land
+    /// here) — the root view alerts on this.
+    @Published var importError: String?
 
     private init() {
         let renderer = try? ShaderRenderer()
@@ -134,7 +137,7 @@ final class AppModel: ObservableObject {
             let doc = try library.importWallshader(from: url)
             open(doc.id)
         } catch {
-            // Import errors surface in the library as-is; nothing crashes.
+            importError = "Couldn't import this wallpaper: \(error.localizedDescription)"
         }
     }
 }

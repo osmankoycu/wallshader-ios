@@ -64,5 +64,13 @@ struct RootView: View {
         }
         .fullScreenCover(isPresented: $app.showingOnboarding) { OnboardingView() }
         .sheet(isPresented: $app.showingGuideProbe) { GuideSheet() }
+        .alert("Import Failed", isPresented: Binding(
+            get: { app.importError != nil },
+            set: { if !$0 { app.importError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(app.importError ?? "")
+        }
     }
 }

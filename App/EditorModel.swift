@@ -58,6 +58,13 @@ final class EditorModel: ObservableObject {
                 if fresh != self.document { self.document = fresh }
             }
             .store(in: &cancellables)
+        // The 400 ms writeback debounce must not race app death: flush
+        // the moment we resign active (jetsam, force-quit, crash — the
+        // Mac's freeze/quit state machine enforces the same invariant).
+        NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.flushPendingWriteback() }
+            .store(in: &cancellables)
     }
 
     var currentImageAspect: Double? {
@@ -486,17 +493,25 @@ final class EditorModel: ObservableObject {
     // MARK: - Photo import
 
     func importImage(url: URL, attribution: WallpaperDocument.Attribution? = nil,
-                     onDone: (() -> Void)? = nil) {
+                     onDone: (() -> Void)? = nil,
+                     onFailure: ((Error) -> Void)? = nil) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let prepared = try? await Task.detached(priority: .userInitiated) {
-                try WallpaperLibrary.prepareSourceImport(from: url)
-            }.value
-            guard let prepared else { return }
-            _ = try? self.library.adoptPreparedSourceImage(prepared, into: self.documentID,
-                                                           attribution: attribution)
-            self.reloadEditor()
-            onDone?()
+            do {
+                let prepared = try await Task.detached(priority: .userInitiated) {
+                    try WallpaperLibrary.prepareSourceImport(from: url)
+                }.value
+                guard try self.library.adoptPreparedSourceImage(
+                    prepared, into: self.documentID, attribution: attribution) != nil else {
+                    throw CocoaError(.fileNoSuchFile)
+                }
+                self.reloadEditor()
+                onDone?()
+            } catch {
+                // The photo never arrived — every caller owes the user
+                // a word (silent failure read as "the app is broken").
+                onFailure?(error)
+            }
         }
     }
 }

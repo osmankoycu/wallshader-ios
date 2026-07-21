@@ -46,22 +46,38 @@ struct PhotoSourcesSheet: View {
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task {
+                defer { photoItem = nil; dismiss() }
                 // Copy-into-document: the picked bytes land in a temp file
-                // and flow through the same import layer as everything else.
-                if let data = try? await item.loadTransferable(type: Data.self) {
-                    let tmp = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("picked-\(UUID().uuidString)")
-                    try? data.write(to: tmp)
-                    model.importImage(url: tmp)
+                // and flow through the same import layer as everything
+                // else. Every failure SAYS so — an iCloud photo that
+                // isn't local while offline used to just… not arrive.
+                guard let data = try? await item.loadTransferable(type: Data.self) else {
+                    AppModel.shared.importError =
+                        "Couldn't load that photo from your library. Check your connection and try again."
+                    return
                 }
-                photoItem = nil
-                dismiss()
+                let tmp = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("picked-\(UUID().uuidString)")
+                do {
+                    try data.write(to: tmp)
+                } catch {
+                    AppModel.shared.importError =
+                        "Couldn't save the picked photo: \(error.localizedDescription)"
+                    return
+                }
+                model.importImage(url: tmp, onFailure: { error in
+                    AppModel.shared.importError =
+                        "Couldn't import this photo: \(error.localizedDescription)"
+                })
             }
         }
         .fileImporter(isPresented: $showingFiles,
                       allowedContentTypes: [.image]) { result in
             if case .success(let url) = result {
-                model.importImage(url: url)
+                model.importImage(url: url, onFailure: { error in
+                    AppModel.shared.importError =
+                        "Couldn't import this photo: \(error.localizedDescription)"
+                })
             }
             dismiss()
         }
@@ -162,7 +178,11 @@ struct UnsplashSearchSheet: View {
                 let px = Int(UIScreen.main.nativeBounds.height)
                 let url = try await UnsplashClient.shared.downloadForImport(
                     photo, targetPixelWidth: max(2556, px))
-                model.importImage(url: url, attribution: photo.attribution)
+                model.importImage(url: url, attribution: photo.attribution,
+                                  onFailure: { error in
+                    AppModel.shared.importError =
+                        "Couldn't import this photo: \(error.localizedDescription)"
+                })
                 dismiss()
                 onDone()
             } catch {

@@ -686,6 +686,13 @@ struct LibraryView: View {
             let model = EditorModel(app: app, documentID: doc.id)
             model.importImage(url: url) { [self] in
                 editSession = EditSession(id: doc.id, model: model)
+            } onFailure: { [self] error in
+                // No ghost blanks: the document existed only FOR this
+                // photo — roll it back and say what happened, or it sits
+                // invisible in the library burning a free-tier slot.
+                library.delete(doc.id)
+                hiddenNewDocID = nil
+                app.importError = "Couldn't add this photo: \(error.localizedDescription)"
             }
         }
     }
@@ -979,13 +986,24 @@ private struct NewWallpaperSheet: View {
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task {
-                if let data = try? await item.loadTransferable(type: Data.self) {
-                    let tmp = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("picked-\(UUID().uuidString)")
-                    try? data.write(to: tmp)
-                    onPhotoPicked(tmp)
+                defer { photoItem = nil }
+                // A photo that never arrives must SAY so (offline iCloud
+                // originals, disk-full temp writes) — silence here read
+                // as "the + button is broken".
+                guard let data = try? await item.loadTransferable(type: Data.self) else {
+                    AppModel.shared.importError =
+                        "Couldn't load that photo from your library. Check your connection and try again."
+                    return
                 }
-                photoItem = nil
+                let tmp = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("picked-\(UUID().uuidString)")
+                do {
+                    try data.write(to: tmp)
+                    onPhotoPicked(tmp)
+                } catch {
+                    AppModel.shared.importError =
+                        "Couldn't save the picked photo: \(error.localizedDescription)"
+                }
             }
         }
         .fileImporter(isPresented: $showingFiles, allowedContentTypes: [.image]) { result in

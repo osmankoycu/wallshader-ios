@@ -30,7 +30,11 @@ struct EditView: View {
     var onClose: (() -> Void)? = nil
     @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.undoManager) private var undoManager
+    /// SESSION-scoped undo, never the window's shared manager: rename/
+    /// delete/duplicate undos registered outside would light Done yellow
+    /// on a fresh session and let the editor's arrow silently revert
+    /// library actions behind the fullscreen cover.
+    @State private var undoManager = UndoManager()
 
     enum Tab: String, CaseIterable {
         case shader = "Shader"
@@ -281,7 +285,9 @@ struct EditView: View {
         }
         .sheet(isPresented: $showingPhotoReplace) {
             PhotoReplaceSheet { url in
-                model.importImage(url: url)
+                model.importImage(url: url, onFailure: { error in
+                    app.importError = "Couldn't replace the photo: \(error.localizedDescription)"
+                })
             }
         }
         .onAppear {
@@ -321,7 +327,7 @@ struct EditView: View {
             HStack {
                 HStack(spacing: 0) {
                     Button {
-                        undoManager?.undo()
+                        undoManager.undo()
                         model.reloadEditor()
                     } label: {
                         Image(systemName: "arrow.uturn.backward")
@@ -329,7 +335,7 @@ struct EditView: View {
                     }
                     .disabled(!canUndo)
                     Button {
-                        undoManager?.redo()
+                        undoManager.redo()
                         model.reloadEditor()
                     } label: {
                         Image(systemName: "arrow.uturn.forward")
@@ -469,8 +475,8 @@ struct EditView: View {
     }
 
     private func refreshUndoState() {
-        canUndo = undoManager?.canUndo ?? false
-        canRedo = undoManager?.canRedo ?? false
+        canUndo = undoManager.canUndo
+        canRedo = undoManager.canRedo
     }
 
     private func cancel() {
@@ -602,7 +608,7 @@ struct EditView: View {
 
             HStack(spacing: 0) {
                 Button {
-                    undoManager?.undo()
+                    undoManager.undo()
                     model.reloadEditor()
                 } label: {
                     Image(systemName: "arrow.uturn.backward")
@@ -610,7 +616,7 @@ struct EditView: View {
                 }
                 .disabled(!canUndo)
                 Button {
-                    undoManager?.redo()
+                    undoManager.redo()
                     model.reloadEditor()
                 } label: {
                     Image(systemName: "arrow.uturn.forward")
