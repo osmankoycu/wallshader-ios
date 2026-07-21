@@ -140,7 +140,8 @@ struct PreviewMetalView: UIViewRepresentable {
             // CANONICAL wallpaper pixels and the layer scales the image —
             // every surface then shows the same wallpaper, just smaller.
             let size: CGSize
-            if let model, ShaderRenderer.fragCoordPositionedShaders.contains(model.shaderId) {
+            if let model, !model.rendersAtViewPixels,
+               ShaderRenderer.fragCoordPositionedShaders.contains(model.shaderId) {
                 let px = model.emulatedPixels.pixels
                 size = CGSize(width: CGFloat(px.x), height: CGFloat(px.y))
             } else {
@@ -178,13 +179,19 @@ struct PreviewMetalView: UIViewRepresentable {
 
             let time = model.currentTimeSeconds()
             // Miniature the target device's canonical wallpaper, exactly
-            // like the Mac canvas miniatures the screen (shared math).
+            // like the Mac canvas miniatures the screen (shared math) —
+            // unless this surface renders 1:1 at its own pixels.
             let target = model.emulatedPixels
             let drawablePx = SIMD2(Float(metalLayer.drawableSize.width),
                                    Float(metalLayer.drawableSize.height))
-            let (resolution, pixelRatio) = ShaderRenderer.miniatureInputs(
-                shaderId: model.shaderId, drawable: drawablePx,
-                target: target.pixels, targetPixelRatio: target.pixelRatio)
+            let (resolution, pixelRatio): (SIMD2<Float>, Float)
+            if model.rendersAtViewPixels {
+                (resolution, pixelRatio) = (drawablePx, Float(metalLayer.contentsScale))
+            } else {
+                (resolution, pixelRatio) = ShaderRenderer.miniatureInputs(
+                    shaderId: model.shaderId, drawable: drawablePx,
+                    target: target.pixels, targetPixelRatio: target.pixelRatio)
+            }
 
             let frame = ShaderRenderer.FrameInput(
                 timeSeconds: time,
@@ -230,6 +237,10 @@ final class PreviewModel: ObservableObject {
     @Published var ambient: AmbientRenderSpec?
     /// The selected variant's canonical device pixels (miniature target).
     var emulatedPixels: (pixels: SIMD2<Float>, pixelRatio: Float)
+    /// Onboarding hero only: render at the VIEW's own pixels like the Mac
+    /// welcome — no canonical pin, no miniature. The dither cells then
+    /// coarsen relative to the shrinking tile, which is the entire effect.
+    var rendersAtViewPixels = false
 
     var lastRenderedTimeSeconds: Float = 0
     private var clockBaseMs: Double = 0
