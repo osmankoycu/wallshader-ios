@@ -244,9 +244,12 @@ struct LibraryView: View {
             .padding(.horizontal, Self.gridGap * 1.5)
             .padding(.top, 2)
             // The grid draws under the home indicator (ignored safe area),
-            // so give the content a bottom runway: the last row can scroll
-            // fully clear of the screen edge.
-            .padding(.bottom, 48)
+            // so give the content a bottom runway: the last row must scroll
+            // fully clear of the floating tab bar AND the screen edge
+            // (bar 62 + home inset + breathing room). This also keeps the
+            // return zoom's minimal scroll from parking its target tile
+            // behind the bar.
+            .padding(.bottom, 128)
         }
         .softTopEdge()
         .softBottomEdge()
@@ -257,10 +260,13 @@ struct LibraryView: View {
         .libraryHeaderBar(header(for: shelf))
         // While the detail pager swipes between wallpapers, keep the grid
         // scrolled to the current one so the dismiss zoom has its tile on
-        // screen to land on (Photos behavior).
+        // screen to land on (Photos behavior). ONLY the active shelf
+        // follows — the shelves manage their scroll independently — and
+        // the nil anchor scrolls the MINIMUM needed, so a tile already on
+        // screen keeps the grid exactly where the user left it.
         .onChange(of: app.selectedID) { _, id in
-            guard let id, !app.path.isEmpty else { return }
-            proxy.scrollTo(id, anchor: .center)
+            guard let id, !app.path.isEmpty, shelf == tab else { return }
+            proxy.scrollTo(id)
         }
         }
     }
@@ -331,7 +337,11 @@ struct LibraryView: View {
             if selecting {
                 if isSelected { selected.remove(doc.id) } else { selected.insert(doc.id) }
             } else {
-                app.open(doc.id)
+                // From Favorites, the detail pager walks favorites ONLY —
+                // frozen at open so a mid-session unfavorite can't yank
+                // pages out from underfoot.
+                app.open(doc.id, scope: shelf == .favorites
+                    ? documents(for: .favorites).map(\.id) : nil)
             }
         } label: {
             thumbnailImage(doc)
@@ -380,7 +390,11 @@ struct LibraryView: View {
                 .accessibilityLabel(Text(doc.name))
         }
         .buttonStyle(.plain)
-        .zoomTransitionSource(id: doc.id, in: zoomNamespace)
+        // Only the ACTIVE shelf registers return targets: both grids stay
+        // alive (opacity swap), and a favorite registered twice in the
+        // namespace resolved to the hidden All grid — the return zoom then
+        // shrank to screen center instead of the Favorites tile.
+        .zoomTransitionSource(id: doc.id, in: shelf == tab ? zoomNamespace : nil)
         // ONE stable identity: branching tile vs tile.contextMenu swapped
         // the view identity on select-mode toggles, so every thumbnail got
         // removed+reinserted — the "all images flick" report. An empty

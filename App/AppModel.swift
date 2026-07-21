@@ -26,6 +26,10 @@ final class AppModel: ObservableObject {
     private var syncStatusMirror: AnyCancellable?
     static let syncEnabledKey = "syncWithICloud"
     @Published var path: [UUID] = []
+    /// Detail pager scope: the id list frozen when a wallpaper is opened
+    /// from a filtered shelf (Favorites pages only through favorites,
+    /// Photos-album style). nil = the whole library, live.
+    @Published var detailScopeIDs: [UUID]?
     @Published var previewsPaused = false
     @Published var showingPaywall = false
     @Published var showingOnboarding = false
@@ -104,7 +108,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func open(_ id: UUID) {
+    func open(_ id: UUID, scope: [UUID]? = nil) {
+        detailScopeIDs = scope
         selectedID = id
         if UIDevice.current.userInterfaceIdiom != .pad, path.last != id {
             path.append(id)

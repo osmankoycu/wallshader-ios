@@ -61,6 +61,15 @@ struct DetailView: View {
     private var currentModel: EditorModel { model(for: currentID) }
     private var currentDocument: WallpaperDocument? { library.document(id: currentID) }
 
+    /// What the pager, filmstrip and neighbor logic walk: the shelf scope
+    /// frozen at open (Favorites), or the whole library.
+    private var pagedDocuments: [WallpaperDocument] {
+        if let ids = app.detailScopeIDs {
+            return ids.compactMap { library.document(id: $0) }
+        }
+        return library.documents
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -73,7 +82,7 @@ struct DetailView: View {
             // over a big library would spin up every photo texture at once.
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 24) {
-                    ForEach(library.documents) { doc in
+                    ForEach(pagedDocuments) { doc in
                         Group {
                             if isNeighbor(doc.id) {
                                 pagePreview(doc)
@@ -121,10 +130,7 @@ struct DetailView: View {
         // The dismiss zoom targets whatever wallpaper is CURRENT — swiping
         // in the pager retargets it, and the grid scrolls along behind
         // (selectedID sync below) so the tile is on screen to land on.
-        // While the editor is up, the zoom pair is DETACHED: its
-        // interactive pinch-to-grid was swallowing the Frame tab's
-        // two-finger framing gestures.
-        .zoomTransition(sourceID: currentID, in: editing ? nil : zoomNamespace)
+        .zoomTransition(sourceID: currentID, in: zoomNamespace)
         .onChange(of: pagerID) { _, id in
             if let id, id != currentID { currentID = id }
         }
@@ -266,7 +272,7 @@ struct DetailView: View {
     }
 
     private func prewarmNeighbors() {
-        let docs = library.documents
+        let docs = pagedDocuments
         guard let index = docs.firstIndex(where: { $0.id == currentID }) else { return }
         for offset in [-1, 1] {
             let j = index + offset
@@ -276,7 +282,7 @@ struct DetailView: View {
     }
 
     private func isNeighbor(_ id: UUID) -> Bool {
-        let docs = library.documents
+        let docs = pagedDocuments
         guard let current = docs.firstIndex(where: { $0.id == currentID }),
               let index = docs.firstIndex(where: { $0.id == id }) else { return false }
         return abs(current - index) <= 1
@@ -418,7 +424,7 @@ struct DetailView: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Self.stripSpacing) {
-                    ForEach(library.documents) { doc in
+                    ForEach(pagedDocuments) { doc in
                         filmstripThumb(doc)
                             .id(doc.id)
                     }
@@ -473,7 +479,7 @@ struct DetailView: View {
     /// calibrates the geometry baseline (inset conventions differ), then
     /// center-x maps to an index by constant stride.
     private func handleStripGeometry(_ midX: CGFloat) {
-        let docs = library.documents
+        let docs = pagedDocuments
         guard !docs.isEmpty else { return }
         if !stripScrubbing {
             if let index = docs.firstIndex(where: { $0.id == currentID }) {
@@ -636,14 +642,15 @@ struct DetailView: View {
     private func deleteCurrent() {
         guard let doc = currentDocument else { return }
         let imageData = library.sourceImageData(for: doc)
-        let neighbors = library.documents
+        let neighbors = pagedDocuments
         let index = neighbors.firstIndex { $0.id == doc.id } ?? 0
         library.delete(doc.id)
+        app.detailScopeIDs?.removeAll { $0 == doc.id }
         undoManager?.registerUndo(withTarget: library) { lib in
             lib.restore(doc, imagePNG: imageData)
         }
         models.remove(doc.id)
-        let remaining = library.documents
+        let remaining = pagedDocuments
         if remaining.isEmpty {
             dismiss()
         } else {
