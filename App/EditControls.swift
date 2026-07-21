@@ -138,6 +138,17 @@ enum EditControls {
 
         var motion: [EditControl] = []
         let animated = model.editingVariant?.animated ?? false
+        if schema.animated {
+            // The header play/pause's twin, sitting where Speed lives —
+            // one flag, two doors; each mirrors the other instantly.
+            motion.append(EditControl(
+                id: "animate", title: animated ? "Pause" : "Play",
+                systemImage: animated ? "pause.fill" : "play.fill",
+                kind: .action(run: {
+                    model.setAnimated(!(model.editingVariant?.animated ?? false))
+                    UISelectionFeedbackGenerator().selectionChanged()
+                })))
+        }
         if schema.animated, animated,
            let speed = schema.params.first(where: { $0.name == "speed" }) {
             motion.append(paramControl(speed, model: model, icon: "speedometer"))
