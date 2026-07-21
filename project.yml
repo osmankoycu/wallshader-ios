@@ -135,6 +135,12 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        # iPad is LANDSCAPE-ONLY by design (the edit layout builds on it);
+        # fullscreen-required, since windowed apps can't restrict rotation.
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIRequiresFullScreen: true
         UTImportedTypeDeclarations: []
         # public.content marks the file as a user document (a bare
         # public.data reads as inert binary — Messages showed a dead

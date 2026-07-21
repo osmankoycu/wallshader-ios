@@ -71,16 +71,22 @@ extension View {
         }
     }
 
+    /// `interactive: false` for containers SHARED by several buttons —
+    /// the liquid touch-bounce animates the whole capsule there, which
+    /// reads as every button flickering.
     @ViewBuilder
-    func chromeGlass(in shape: some Shape, tint: Color? = nil) -> some View {
+    func chromeGlass(in shape: some Shape, tint: Color? = nil,
+                     interactive: Bool = true) -> some View {
         if #available(iOS 26.0, *) {
             // .regular for now. .clear was tried for the Photos-like
             // transparency and felt WORSE on hardware (2026-07-18) — the
             // regular scrim question stays open for a later pass.
             if let tint {
-                glassEffect(.regular.tint(tint).interactive(), in: shape)
+                glassEffect(interactive ? .regular.tint(tint).interactive()
+                                        : .regular.tint(tint), in: shape)
             } else {
-                glassEffect(.regular.interactive(), in: shape)
+                glassEffect(interactive ? .regular.interactive() : .regular,
+                            in: shape)
             }
         } else {
             background {

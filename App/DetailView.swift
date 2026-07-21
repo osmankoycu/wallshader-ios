@@ -48,6 +48,7 @@ struct DetailView: View {
     @State private var stripBaseline: CGFloat?
     @State private var stripTapJump = false
     @State private var showingSizeSheet = false
+    @State private var shareItem: URL?
 
     init(documentID: UUID, zoomNamespace: Namespace.ID? = nil) {
         _currentID = State(initialValue: documentID)
@@ -209,6 +210,11 @@ struct DetailView: View {
         .sheet(isPresented: $showingSizeSheet) {
             ExportSizeSheet(model: currentModel)
         }
+        // Sheet, not a bare present: a raw UIActivityViewController with
+        // no popover anchor throws on iPad.
+        .sheet(item: $shareItem) { url in
+            ShareSheet(items: [url])
+        }
         .alert("Rename Wallpaper", isPresented: $renaming) {
             TextField("Name", text: $renameText)
             Button("Rename") {
@@ -329,6 +335,9 @@ struct DetailView: View {
             // and away, bottom chrome slides down — the editor's pieces
             // arrive along the same axes.
             topBar
+                // The status bar is hidden, so the landscape iPad's top
+                // inset is zero and the bar glued to the edge — seat it.
+                .padding(.top, UIDevice.current.userInterfaceIdiom == .pad ? 20 : 0)
                 .offset(y: editorRevealed ? -56 : 0)
                 .opacity(editorRevealed || closingEditor ? 0 : 1)
             Spacer()
@@ -347,9 +356,7 @@ struct DetailView: View {
 
     private var topBar: some View {
         HStack {
-            if UIDevice.current.userInterfaceIdiom != .pad {
-                pillButton(systemImage: "chevron.left", label: "Back") { dismiss() }
-            }
+            pillButton(systemImage: "chevron.left", label: "Back") { dismiss() }
 
             Spacer()
 
@@ -421,7 +428,8 @@ struct DetailView: View {
     // MARK: - Filmstrip (Photos-style neighbor strip)
 
     /// Thumb geometry: constant width so the scrubber math is exact.
-    private static let stripThumbWidth: CGFloat = 28
+    private static let stripThumbWidth: CGFloat =
+        UIDevice.current.userInterfaceIdiom == .pad ? 58 : 28
     private static let stripSpacing: CGFloat = 3
     private static var stripStride: CGFloat { stripThumbWidth + stripSpacing }
     private static let stripHaptic = UISelectionFeedbackGenerator()
@@ -537,7 +545,9 @@ struct DetailView: View {
 
             Spacer()
 
-            HStack(spacing: 26) {
+            // 44pt hit targets inside the capsule; the tighter paddings
+            // keep its visual size where it was.
+            HStack(spacing: 8) {
                 SaveWallpaperButton(model: currentModel, showingGuide: $showingGuide,
                                     saveError: $saveError)
 
@@ -547,14 +557,16 @@ struct DetailView: View {
                 } label: {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 20, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .disabled(!(currentDocument?.isAppliable ?? false)
                           && currentDocument?.kind == nil)
                 .accessibilityLabel("Edit")
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 2)
             .chromeGlass(in: Capsule())
 
             Spacer()
@@ -596,12 +608,7 @@ struct DetailView: View {
 
     private func share() {
         guard let url = SaveWallpaperButton.renderTemporaryPNG(model: currentModel) else { return }
-        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        UIApplication.shared.connectedScenes
-            .compactMap { ($0 as? UIWindowScene)?.keyWindow?.rootViewController }
-            .first?
-            .presentedOrSelf
-            .present(controller, animated: true)
+        shareItem = url
     }
 
     /// The portable .wallshader file (recipe + embedded photo) through
@@ -627,12 +634,7 @@ struct DetailView: View {
             saveError = error.localizedDescription
             return
         }
-        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        UIApplication.shared.connectedScenes
-            .compactMap { ($0 as? UIWindowScene)?.keyWindow?.rootViewController }
-            .first?
-            .presentedOrSelf
-            .present(controller, animated: true)
+        shareItem = url
         _ = doc
     }
 
@@ -662,12 +664,6 @@ struct DetailView: View {
         } else {
             currentID = remaining[min(index, remaining.count - 1)].id
         }
-    }
-}
-
-private extension UIViewController {
-    var presentedOrSelf: UIViewController {
-        presentedViewController?.presentedOrSelf ?? self
     }
 }
 

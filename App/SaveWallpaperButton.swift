@@ -34,12 +34,16 @@ struct SaveWallpaperButton: View {
                         saveStill()
                     }
                 } label: {
-                    if saving {
-                        ProgressView().tint(.white)
-                    } else {
-                        Image(systemName: "arrow.down.circle.fill")
-                            .font(.system(size: 20, weight: .semibold))
+                    Group {
+                        if saving {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.system(size: 20, weight: .semibold))
+                        }
                     }
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
                 }
                 .disabled(saving || !(model.document?.isAppliable ?? false))
                 .accessibilityLabel("Save Wallpaper")
@@ -57,6 +61,8 @@ struct SaveWallpaperButton: View {
                 } label: {
                     Image(systemName: "square.and.arrow.down")
                         .font(.system(size: 20, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .disabled(!(model.document?.isAppliable ?? false))
                 .accessibilityLabel("Export")
@@ -76,6 +82,16 @@ struct SaveWallpaperButton: View {
     }
 
     // MARK: - Rendering
+
+    /// The device's wallpaper pixels. `nativeBounds` is ALWAYS
+    /// portrait-oriented; iPad runs (and papers) landscape-only, so the
+    /// long edge goes horizontal there.
+    static var screenWallpaperPixels: CGSize {
+        let native = UIScreen.main.nativeBounds.size
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return native }
+        return CGSize(width: max(native.width, native.height),
+                      height: min(native.width, native.height))
+    }
 
     static func renderImage(model: EditorModel, pixels: CGSize) -> CGImage? {
         guard let renderer = model.app.renderer,
@@ -97,7 +113,7 @@ struct SaveWallpaperButton: View {
 
     static func renderTemporaryPNG(model: EditorModel, pixels: CGSize? = nil) -> URL? {
         guard let renderer = model.app.renderer else { return nil }
-        let target = pixels ?? UIScreen.main.nativeBounds.size
+        let target = pixels ?? Self.screenWallpaperPixels
         guard let image = renderImage(model: model, pixels: target) else { return nil }
         let name = (model.document?.name ?? "Wallpaper")
             .components(separatedBy: CharacterSet(charactersIn: "/:\\")).joined(separator: "-")
@@ -115,7 +131,7 @@ struct SaveWallpaperButton: View {
         Task { @MainActor in
             defer { saving = false }
             guard let image = Self.renderImage(model: model,
-                                               pixels: UIScreen.main.nativeBounds.size) else {
+                                               pixels: Self.screenWallpaperPixels) else {
                 saveError = "Couldn't render this wallpaper."
                 return
             }

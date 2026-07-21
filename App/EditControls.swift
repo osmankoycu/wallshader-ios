@@ -339,18 +339,32 @@ enum EditControls {
     }
 }
 
+/// The width edit rows lay out against: the screen on iPhone, the edit
+/// PANEL's width on iPad (injected by the iPad edit layout).
+private struct EditRowWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = UIScreen.main.bounds.width
+}
+
+extension EnvironmentValues {
+    var editRowWidth: CGFloat {
+        get { self[EditRowWidthKey.self] }
+        set { self[EditRowWidthKey.self] = newValue }
+    }
+}
+
 /// A horizontal control row that CENTERS its content while it fits the
-/// screen and turns into a leading-anchored scroller once it overflows —
+/// container and turns into a leading-anchored scroller once it overflows —
 /// the batch-wide row rule (presets, palettes, color wells, option pills).
 struct CenteredScrollRow<Content: View>: View {
     var spacing: CGFloat = 10
     @ViewBuilder let content: () -> Content
+    @Environment(\.editRowWidth) private var rowWidth
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: spacing) { content() }
                 .padding(.horizontal, 16)
-                .frame(minWidth: UIScreen.main.bounds.width)
+                .frame(minWidth: rowWidth)
         }
         .scrollBounceBehavior(.basedOnSize)
         // The glass press-scale briefly overflows the row — without this
@@ -372,6 +386,7 @@ struct AdjustControlsRow: View {
     let sections: [EditSection]
     /// Bubbles the ruler's drag state up (the auto-fullscreen hook).
     var onScrubbing: ((Bool) -> Void)? = nil
+    @Environment(\.editRowWidth) private var rowWidth
     @State private var selectedID: String?
     /// The carousel's centered item (drives selection; markers and
     /// non-selectable circles can pass through the center unselected).
@@ -445,7 +460,7 @@ struct AdjustControlsRow: View {
             }
             .scrollClipDisabled()
             .contentMargins(.horizontal,
-                            max(0, UIScreen.main.bounds.width / 2 - 31),
+                            max(0, rowWidth / 2 - 31),
                             for: .scrollContent)
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: $centeredID, anchor: .center)
@@ -473,6 +488,23 @@ struct AdjustControlsRow: View {
             detail
                 .frame(height: 58)
                 .padding(.horizontal, 24)
+        }
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        if let selected {
+            switch selected.kind {
+            case .slider(let range, let step, let defaultValue, let get, let set, let commit):
+                RulerSlider(
+                    value: Binding(get: get, set: set),
+                    range: range, step: step, defaultValue: defaultValue,
+                    onCommit: commit, onScrubbing: onScrubbing)
+            case .options(let all, let get, let set):
+                OptionPillsRow(all: all, current: get(), set: set)
+            default:
+                EmptyView()
+            }
         }
     }
 
@@ -527,22 +559,6 @@ struct AdjustControlsRow: View {
         }
     }
 
-    @ViewBuilder
-    private var detail: some View {
-        if let selected {
-            switch selected.kind {
-            case .slider(let range, let step, let defaultValue, let get, let set, let commit):
-                RulerSlider(
-                    value: Binding(get: get, set: set),
-                    range: range, step: step, defaultValue: defaultValue,
-                    onCommit: commit, onScrubbing: onScrubbing)
-            case .options(let all, let get, let set):
-                OptionPillsRow(all: all, current: get(), set: set)
-            default:
-                EmptyView()
-            }
-        }
-    }
 }
 
 /// Fires when a scroll gesture fully settles (iOS 18 scroll phases; a
@@ -561,26 +577,213 @@ private struct ScrollIdleObserver: ViewModifier {
     }
 }
 
-/// The thin vertical section divider with its tiny label riding on top,
-/// left-aligned to the line.
+/// The thin section divider with its tiny label riding on top. Horizontal
+/// rows get the vertical hairline; the iPad's vertical column lays the
+/// line down flat.
 private struct SectionMarker: View {
     let title: String?
+    var vertical = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title?.uppercased() ?? " ")
-                .font(.system(size: 8, weight: .semibold))
-                .kerning(0.6)
-                .foregroundStyle(.white.opacity(title == nil ? 0 : 0.4))
-                .fixedSize()
-            Rectangle()
-                .fill(.white.opacity(0.16))
-                .frame(width: 1, height: 44)
+        Group {
+            if vertical {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title?.uppercased() ?? " ")
+                        .font(.system(size: 8, weight: .semibold))
+                        .kerning(0.6)
+                        .foregroundStyle(.white.opacity(title == nil ? 0 : 0.4))
+                        .fixedSize()
+                    Rectangle()
+                        .fill(.white.opacity(0.16))
+                        .frame(width: 44, height: 1)
+                }
+                .padding(.vertical, 7)
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title?.uppercased() ?? " ")
+                        .font(.system(size: 8, weight: .semibold))
+                        .kerning(0.6)
+                        .foregroundStyle(.white.opacity(title == nil ? 0 : 0.4))
+                        .fixedSize()
+                    Rectangle()
+                        .fill(.white.opacity(0.16))
+                        .frame(width: 1, height: 44)
+                }
+                .padding(.horizontal, 7)
+                .padding(.bottom, 10)
+            }
         }
-        .padding(.horizontal, 7)
-        .padding(.bottom, 10)
         .accessibilityHidden(true)
     }
+}
+
+/// The iPad Adjust surface, Photos-style: a VERTICAL circle carousel at
+/// the panel edge (centered item active, same snap/hop rules as the
+/// horizontal one) with a standing ruler beside it.
+struct AdjustControlsColumn: View {
+    @ObservedObject var model: EditorModel
+    @ObservedObject var preview: PreviewModel
+    let sections: [EditSection]
+    /// Lifted: the edit screen renders the selected control's detail in
+    /// the BOTTOM strip (stable layout — nothing on the right resizes).
+    @Binding var selectedID: String?
+    @State private var centeredID: String?
+    @State private var lastControlIndex: Int?
+
+    private enum RowEntry: Identifiable {
+        case control(EditControl)
+        case marker(Int, String?)
+        var id: String {
+            switch self {
+            case .control(let control): return control.id
+            case .marker(let index, _): return "marker-\(index)"
+            }
+        }
+    }
+
+    private var rowEntries: [RowEntry] {
+        var out: [RowEntry] = []
+        for (index, section) in sections.enumerated() {
+            if index > 0 { out.append(.marker(index, section.title)) }
+            out.append(contentsOf: section.controls.map(RowEntry.control))
+        }
+        return out
+    }
+
+    private var controls: [EditControl] { sections.flatMap(\.controls) }
+
+    private var selected: EditControl? {
+        controls.first { $0.id == (selectedID ?? firstAdjustableID) }
+    }
+
+    private var firstAdjustableID: String? {
+        controls.first {
+            if case .slider = $0.kind { return true }
+            if case .options = $0.kind { return true }
+            return false
+        }?.id
+    }
+
+    /// One carousel cell's fixed height — the centering math depends on it.
+    private static let cellHeight: CGFloat = 82
+    /// The circle glyph's center measured from the cell top (circle 46pt
+    /// after ~4pt inset): what must land on the screen midline.
+    private static let glyphCenter: CGFloat = 27
+
+    var body: some View {
+        HStack(spacing: 8) {
+            GeometryReader { geo in
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        ForEach(rowEntries) { entry in
+                            switch entry {
+                            case .marker(_, let title):
+                                SectionMarker(title: title, vertical: true)
+                                    .id(entry.id)
+                            case .control(let control):
+                                ControlCircle(
+                                    title: control.title,
+                                    systemImage: circleIcon(control),
+                                    isSelected: control.id == selected?.id && isSelectable(control),
+                                    isModified: control.isModified(),
+                                    action: { activate(control) })
+                                .frame(height: Self.cellHeight)
+                                .id(entry.id)
+                            }
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .scrollClipDisabled()
+                // The circles melt away toward the edges instead of
+                // running into the header/footer chrome.
+                .mask {
+                    LinearGradient(stops: [.init(color: .clear, location: 0),
+                                           .init(color: .black, location: 0.12),
+                                           .init(color: .black, location: 0.88),
+                                           .init(color: .clear, location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+                // Asymmetric margins: the eye aligns the CIRCLE GLYPH to
+                // the ruler needle, and the glyph sits above the cell's
+                // center (label + dot below it). Bias the snap so the
+                // glyph — not the cell — lands on the screen midline.
+                .contentMargins(.top,
+                                max(0, geo.size.height / 2 - Self.glyphCenter),
+                                for: .scrollContent)
+                .contentMargins(.bottom,
+                                max(0, geo.size.height / 2 - (Self.cellHeight - Self.glyphCenter)),
+                                for: .scrollContent)
+                .scrollTargetBehavior(.viewAligned)
+                .scrollPosition(id: $centeredID, anchor: .center)
+                .modifier(ScrollIdleObserver(onIdle: settleOffMarker))
+                .onChange(of: centeredID) { _, id in
+                    guard let id,
+                          let index = rowEntries.firstIndex(where: { $0.id == id }),
+                          case .control(let control) = rowEntries[index] else { return }
+                    lastControlIndex = index
+                    guard isSelectable(control), selectedID != id else { return }
+                    withAnimation(.easeInOut(duration: 0.12)) { selectedID = id }
+                    UISelectionFeedbackGenerator().selectionChanged()
+                }
+                .onAppear {
+                    if centeredID == nil {
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) { centeredID = firstAdjustableID }
+                    }
+                }
+            }
+            .frame(width: 68)
+        }
+    }
+
+    private func settleOffMarker() {
+        guard let id = centeredID,
+              let index = rowEntries.firstIndex(where: { $0.id == id }),
+              case .marker = rowEntries[index] else { return }
+        let direction = index >= (lastControlIndex ?? 0) ? 1 : -1
+        for dir in [direction, -direction] {
+            var j = index + dir
+            while j >= 0, j < rowEntries.count {
+                if case .control(let control) = rowEntries[j] {
+                    withAnimation(.easeOut(duration: 0.2)) { centeredID = control.id }
+                    return
+                }
+                j += dir
+            }
+        }
+    }
+
+    private func circleIcon(_ control: EditControl) -> String {
+        if case .toggle(let get, _) = control.kind {
+            return get() ? "checkmark.circle.fill" : control.systemImage
+        }
+        return control.systemImage
+    }
+
+    private func isSelectable(_ control: EditControl) -> Bool {
+        switch control.kind {
+        case .slider, .options: return true
+        case .toggle, .action: return false
+        }
+    }
+
+    private func activate(_ control: EditControl) {
+        switch control.kind {
+        case .action(let run):
+            run()
+        case .toggle(let get, let set):
+            set(!get())
+            UISelectionFeedbackGenerator().selectionChanged()
+        case .slider, .options:
+            withAnimation(.easeInOut(duration: 0.2)) {
+                centeredID = control.id
+                selectedID = control.id
+            }
+        }
+    }
+
 }
 
 /// Shared option pills (enums, ambient shape, photo color mode).
@@ -622,8 +825,15 @@ struct OptionPillsRow: View {
 struct FrameControlsRow: View {
     @ObservedObject var model: EditorModel
     @ObservedObject var preview: PreviewModel
+    /// iPad right column: circles stacked, the hint moves to the bottom strip.
+    var vertical = false
 
     var body: some View {
+        if vertical {
+            VStack(spacing: 10) {
+                frameCircles
+            }
+        } else {
         VStack(spacing: 14) {
             HStack(spacing: 2) {
                 ControlCircle(title: "Recenter", systemImage: "scope",
@@ -642,6 +852,21 @@ struct FrameControlsRow: View {
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.45))
         }
+        }
+    }
+
+    @ViewBuilder
+    private var frameCircles: some View {
+        ControlCircle(title: "Recenter", systemImage: "scope",
+                      isSelected: false, action: {
+            model.preview.params["offsetX"] = .number(0)
+            model.preview.params["offsetY"] = .number(0)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        })
+        ControlCircle(title: "Fill", systemImage: "arrow.up.left.and.arrow.down.right",
+                      isSelected: fit == "cover", action: { setFit("cover") })
+        ControlCircle(title: "Fit", systemImage: "arrow.down.right.and.arrow.up.left",
+                      isSelected: fit == "contain", action: { setFit("contain") })
     }
 
     private var fit: String {
@@ -663,6 +888,9 @@ struct FrameControlsRow: View {
 struct ColorControlsRow: View {
     @ObservedObject var model: EditorModel
     @ObservedObject var preview: PreviewModel
+    /// iPad bottom strip: palettes + mode pills only — the wells live in
+    /// the right column.
+    var showsWells = true
 
     private var colorArrayParam: ShaderSchema.Param? {
         model.schema?.params.first { $0.type == .colorArray }
@@ -688,9 +916,11 @@ struct ColorControlsRow: View {
                 if currentMode == .custom {
                     paletteStrip(PaletteStore.matching(count: singleColorParams.count),
                                  isSelected: singlesMatch, apply: applyToSingles)
-                    CenteredScrollRow(spacing: 14) {
-                        ForEach(singleColorParams, id: \.name) { param in
-                            singleWell(param)
+                    if showsWells {
+                        CenteredScrollRow(spacing: 14) {
+                            ForEach(singleColorParams, id: \.name) { param in
+                                singleWell(param)
+                            }
                         }
                     }
                 }
@@ -698,21 +928,25 @@ struct ColorControlsRow: View {
                 paletteStrip(PaletteStore.matching(count: colors(param).count),
                              isSelected: { arrayMatches($0, param: param) },
                              apply: { applyToArray($0, param: param) })
-                CenteredScrollRow(spacing: 12) {
-                    arrayWells(param)
-                    if !singleColorParams.isEmpty {
-                        wellsDivider
-                        ForEach(singleColorParams, id: \.name) { param in
-                            singleWell(param)
+                if showsWells {
+                    CenteredScrollRow(spacing: 12) {
+                        arrayWells(param)
+                        if !singleColorParams.isEmpty {
+                            wellsDivider
+                            ForEach(singleColorParams, id: \.name) { param in
+                                singleWell(param)
+                            }
                         }
                     }
                 }
             } else if !singleColorParams.isEmpty {
                 paletteStrip(PaletteStore.matching(count: singleColorParams.count),
                              isSelected: singlesMatch, apply: applyToSingles)
-                CenteredScrollRow(spacing: 14) {
-                    ForEach(singleColorParams, id: \.name) { param in
-                        singleWell(param)
+                if showsWells {
+                    CenteredScrollRow(spacing: 14) {
+                        ForEach(singleColorParams, id: \.name) { param in
+                            singleWell(param)
+                        }
                     }
                 }
             } else {
@@ -995,6 +1229,265 @@ struct ShaderStyleRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text(StripTileStore.displayName(id)))
+    }
+}
+
+/// iPad Shader column: the live shader tiles standing vertically, tap to
+/// switch — the strip turned on its side.
+struct ShaderTilesColumn: View {
+    @ObservedObject var model: EditorModel
+    @ObservedObject var preview: PreviewModel
+    @ObservedObject private var tiles = StripTileStore.shared
+
+    var body: some View {
+        let ids = StripTileStore.orderedIds(for: model.document?.kind ?? .procedural)
+        GeometryReader { geo in
+            // ~78pt per tile (image + label) + 10 spacing.
+            let contentHeight = CGFloat(ids.count) * 78
+                + CGFloat(max(0, ids.count - 1)) * 10
+            if contentHeight <= geo.size.height {
+                // Short sets (the photo filters) don't scroll at all —
+                // the whole column just sits centered.
+                VStack(spacing: 10) {
+                    ForEach(ids, id: \.self) { id in
+                        tile(id)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 10) {
+                        ForEach(ids, id: \.self) { id in
+                            tile(id)
+                        }
+                    }
+                }
+                .scrollClipDisabled()
+                // Half-height margins: the list OPENS with the first tile
+                // on the preview's midline, and either end can scroll to
+                // center.
+                .contentMargins(.vertical, max(0, geo.size.height / 2 - 37),
+                                for: .scrollContent)
+                .mask {
+                    LinearGradient(stops: [.init(color: .clear, location: 0),
+                                           .init(color: .black, location: 0.1),
+                                           .init(color: .black, location: 0.9),
+                                           .init(color: .clear, location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+            }
+        }
+    }
+
+    private func tile(_ id: String) -> some View {
+        let selected = model.document?.shaderId == id
+        return Button {
+            model.switchShader(to: id)
+            UISelectionFeedbackGenerator().selectionChanged()
+        } label: {
+            VStack(spacing: 4) {
+                Group {
+                    if let cg = tiles.tile(for: id, model: model) {
+                        Image(uiImage: UIImage(cgImage: cg))
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        Rectangle().fill(.white.opacity(0.1))
+                    }
+                }
+                .frame(width: 84, height: 58)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(selected ? .white : .clear, lineWidth: 2))
+
+                Text(StripTileStore.displayName(id))
+                    .font(.system(size: 10))
+                    .lineLimit(1)
+                    .foregroundStyle(selected ? .white : .white.opacity(0.55))
+            }
+            .frame(width: 92)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(StripTileStore.displayName(id)))
+    }
+}
+
+/// iPad Colors column: the wells standing vertically (array + singles +
+/// add), the palettes ride the bottom strip.
+struct ColorWellsColumn: View {
+    @ObservedObject var model: EditorModel
+    @ObservedObject var preview: PreviewModel
+
+    private var colorArrayParam: ShaderSchema.Param? {
+        model.schema?.params.first { $0.type == .colorArray }
+    }
+
+    private var singleColorParams: [ShaderSchema.Param] {
+        model.schema?.params.filter { $0.type == .color } ?? []
+    }
+
+    private var hasColorMode: Bool {
+        model.schema?.params.contains { $0.name == "originalColors" } ?? false
+    }
+
+    private var customHidden: Bool {
+        guard hasColorMode else { return false }
+        if case .bool(true)? = model.preview.params["originalColors"] { return true }
+        return false
+    }
+
+    var body: some View {
+        // A handful of wells at most — centered on the midline like the
+        // other columns (no scroll needed at these counts).
+        VStack {
+            Spacer(minLength: 0)
+            VStack(spacing: 12) {
+                if !customHidden {
+                    if let param = colorArrayParam {
+                        arrayWells(param)
+                        if !singleColorParams.isEmpty {
+                            Rectangle()
+                                .fill(.white.opacity(0.18))
+                                .frame(width: 30, height: 1)
+                        }
+                    }
+                    ForEach(singleColorParams, id: \.name) { param in
+                        singleWell(param)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func colors(_ param: ShaderSchema.Param) -> [String] {
+        if case .colorArray(let all)? = model.preview.params[param.name] { return all }
+        return []
+    }
+
+    @ViewBuilder
+    private func arrayWells(_ param: ShaderSchema.Param) -> some View {
+        let all = colors(param)
+        ForEach(Array(all.enumerated()), id: \.offset) { index, hex in
+            ColorPicker("", selection: Binding(
+                get: { Color(hex: hex) },
+                set: { newColor in
+                    var next = all
+                    next[index] = newColor.hexString
+                    model.preview.params[param.name] = .colorArray(next)
+                }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .contextMenu {
+                if all.count > 1 {
+                    Button(role: .destructive) {
+                        var next = all
+                        next.remove(at: index)
+                        model.preview.params[param.name] = .colorArray(next)
+                    } label: { Label("Remove Color", systemImage: "minus.circle") }
+                }
+            }
+        }
+        if all.count < (param.maxCount ?? 8) {
+            Button {
+                var next = all
+                next.append(PaletteStore.randomColor())
+                model.preview.params[param.name] = .colorArray(next)
+            } label: {
+                Image(systemName: "plus")
+                    .frame(width: 32, height: 32)
+                    .chromeGlass(in: Circle())
+                    .foregroundStyle(.white)
+            }
+            .accessibilityLabel("Add Color")
+        }
+    }
+
+    private func singleWell(_ param: ShaderSchema.Param) -> some View {
+        let hex: String = {
+            if case .color(let value)? = model.preview.params[param.name] { return value }
+            return "#000000"
+        }()
+        return VStack(spacing: 4) {
+            ColorPicker("", selection: Binding(
+                get: { Color(hex: hex) },
+                set: { model.preview.params[param.name] = .color($0.hexString) }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            Text(EditControls.displayName(param.name))
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
+        }
+    }
+}
+
+/// iPad Shader bottom strip: the preset pills alone (tiles live in the
+/// right column).
+struct PresetPillsRow: View {
+    @ObservedObject var model: EditorModel
+    @ObservedObject var preview: PreviewModel
+
+    var body: some View {
+        if let presets = model.schema?.presets, !presets.isEmpty {
+            CenteredScrollRow(spacing: 8) {
+                ForEach(presets, id: \.name) { preset in
+                    pill(preset)
+                }
+            }
+        }
+    }
+
+    private func pill(_ preset: ShaderSchema.Preset) -> some View {
+        let selected = matches(preset)
+        return Button {
+            model.apply(preset: preset)
+            UISelectionFeedbackGenerator().selectionChanged()
+        } label: {
+            Text(preset.name)
+                .font(.footnote.weight(selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Color.yellow : .white)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .chromeGlass(in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(preset.name))
+    }
+
+    private func matches(_ preset: ShaderSchema.Preset) -> Bool {
+        guard let schema = model.schema else { return false }
+        let skipSizing = model.document?.kind == .imageBased
+        for (name, value) in preset.params {
+            guard let param = schema.params.first(where: { $0.name == name }) else { continue }
+            if skipSizing, param.group == "sizing" { continue }
+            switch param.type {
+            case .float, .motion:
+                guard let want = value.doubleValue else { continue }
+                guard case .number(let have)? = model.preview.params[name],
+                      abs(have - want) < 0.001 else { return false }
+            case .bool:
+                guard let want = value.boolValue else { continue }
+                guard case .bool(let have)? = model.preview.params[name],
+                      have == want else { return false }
+            case .enumeration:
+                guard let want = value.stringValue else { continue }
+                guard case .choice(let have)? = model.preview.params[name],
+                      have == want else { return false }
+            case .color:
+                guard let want = value.stringValue else { continue }
+                guard case .color(let have)? = model.preview.params[name],
+                      have.lowercased() == want.lowercased() else { return false }
+            case .colorArray:
+                guard let want = value.stringArrayValue else { continue }
+                guard case .colorArray(let have)? = model.preview.params[name],
+                      have.count == want.count,
+                      zip(have, want).allSatisfy({ $0.lowercased() == $1.lowercased() })
+                else { return false }
+            case .image:
+                continue
+            }
+        }
+        return true
     }
 }
 

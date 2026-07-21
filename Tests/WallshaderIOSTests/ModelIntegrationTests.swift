@@ -57,9 +57,11 @@ final class ModelIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testCurrentDeviceCanonicalAspectsArePortraitOnPhone() {
+    func testCanonicalAspectsMatchTheDeviceExperience() {
+        // iPhone is portrait; iPad and desktop are LANDSCAPE — the iPad
+        // app is landscape-only by design (2026-07-21).
         XCTAssertLessThan(DeviceClass.iphone.canonicalAspect, 1)
-        XCTAssertLessThan(DeviceClass.ipad.canonicalAspect, 1)
+        XCTAssertGreaterThan(DeviceClass.ipad.canonicalAspect, 1)
         XCTAssertGreaterThan(DeviceClass.desktop.canonicalAspect, 1)
     }
 }

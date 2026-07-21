@@ -54,28 +54,14 @@ struct RootView: View {
     @Namespace private var zoomNamespace
 
     var body: some View {
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            NavigationSplitView {
-                LibraryView(style: .sidebar)
-            } detail: {
-                if let id = app.selectedID, app.library.document(id: id) != nil {
-                    DetailView(documentID: id)
-                        .id(id)
-                } else {
-                    ContentUnavailableView("No Wallpaper Selected",
-                                           systemImage: "photo.on.rectangle.angled",
-                                           description: Text("Pick one from the library, or create a new wallpaper."))
+        // ONE structure on every device: the iPhone-proven grid → zoom →
+        // fullscreen detail stack (the iPad's split view retired).
+        NavigationStack(path: $app.path) {
+            LibraryView(zoomNamespace: zoomNamespace)
+                .navigationDestination(for: UUID.self) { id in
+                    DetailView(documentID: id, zoomNamespace: zoomNamespace)
                 }
-            }
-            .sheet(isPresented: $app.showingOnboarding) { OnboardingView() }
-        } else {
-            NavigationStack(path: $app.path) {
-                LibraryView(style: .grid, zoomNamespace: zoomNamespace)
-                    .navigationDestination(for: UUID.self) { id in
-                        DetailView(documentID: id, zoomNamespace: zoomNamespace)
-                    }
-            }
-            .fullScreenCover(isPresented: $app.showingOnboarding) { OnboardingView() }
         }
+        .fullScreenCover(isPresented: $app.showingOnboarding) { OnboardingView() }
     }
 }

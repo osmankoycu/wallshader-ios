@@ -56,11 +56,22 @@ struct EditView: View {
     @State private var localZoomed = false
     @State private var localSlotAnchor: Anchor<CGRect>?
     @State private var showingPhotoReplace = false
+    /// iPad Adjust: the carousel's selection, shared with the bottom strip.
+    @State private var adjustSelectedID: String?
     /// Slider-drag auto-fullscreen (experimental): tracks that WE zoomed,
     /// so release can restore — a user-chosen fullscreen is never touched.
     @State private var autoZoomed = false
 
     private static let zoomSpring = Animation.spring(response: 0.42, dampingFraction: 0.86)
+    static let isPad = UIDevice.current.userInterfaceIdiom == .pad
+    /// Both side columns share one width — the preview centers exactly.
+    static let sideColumnWidth: CGFloat = 108
+    /// Vertical mirror of `sideColumnWidth` (literally: same value) —
+    /// the header band and the bottom-strip band are the same height so
+    /// the preview is centered on the screen's midline.
+    static let ipadBand: CGFloat = 108
+    /// Legacy panel offset distance for the reveal animation.
+    static let panelWidth: CGFloat = 200
 
     /// Every shader carries the full sizing group (scale/rotation/offset/
     /// fit), so Frame applies to procedural wallpapers too.
@@ -145,6 +156,91 @@ struct EditView: View {
                 .ignoresSafeArea()
             }
 
+            if Self.isPad {
+                // The right column spans the FULL height at the trailing
+                // edge — every tab's items stand here, centered on the
+                // screen's true midline, matching the rail's width.
+                HStack {
+                    Spacer()
+                    Group {
+                        switch tab {
+                        case .adjust:
+                            AdjustControlsColumn(
+                                model: model, preview: model.preview,
+                                sections: EditControls.adjustSections(model: model),
+                                selectedID: $adjustSelectedID)
+                        case .shader:
+                            ShaderTilesColumn(model: model, preview: model.preview)
+                        case .frame:
+                            VStack {
+                                Spacer()
+                                FrameControlsRow(model: model, preview: model.preview,
+                                                 vertical: true)
+                                Spacer()
+                            }
+                        case .colors:
+                            ColorWellsColumn(model: model, preview: model.preview)
+                        }
+                    }
+                    .frame(width: Self.sideColumnWidth)
+                    // Symmetric, so the midline stays the screen's: the
+                    // melt bands end well inside the corners.
+                    .padding(.vertical, 84)
+                    .offset(x: revealed ? 0 : Self.panelWidth)
+                }
+                .ignoresSafeArea()
+            }
+
+            if Self.isPad {
+                // iPad (landscape-only): vertical tab RAIL on the left,
+                // the preview slot center, a fixed-width vertical controls
+                // PANEL on the right — the Mac inspector's spirit over the
+                // iPhone's proven components.
+                VStack(spacing: 0) {
+                    // Equal bands above and below (like the equal side
+                    // columns) keep the preview dead-center vertically.
+                    ZStack(alignment: .top) {
+                        Color.clear
+                        ipadHeader
+                            .padding(.horizontal, 20)
+                            .padding(.top, 16)
+                            .offset(y: revealed ? 0 : -56)
+                    }
+                    .frame(height: Self.ipadBand)
+
+                    HStack(spacing: 0) {
+                        tabRail
+                            .frame(width: Self.sideColumnWidth)
+                            .offset(x: revealed ? 0 : -Self.sideColumnWidth)
+
+                        GeometryReader { geo in
+                            Color.clear
+                                .aspectRatio(model.selectedDevice.canonicalAspect,
+                                             contentMode: .fit)
+                                .frame(width: geo.size.width, height: geo.size.height)
+                                .anchorPreference(key: EditSlotAnchorKey.self,
+                                                  value: .bounds) { $0 }
+                        }
+                        .padding(.vertical, 8)
+
+                        // Mirror of the rail: the column overlay draws here.
+                        Color.clear.frame(width: Self.sideColumnWidth)
+                    }
+
+                    // The active tab's detail rides BELOW the preview —
+                    // horizontal, roomy, and the right side never resizes.
+                    ZStack {
+                        Color.clear
+                        ipadBottomStrip
+                            .frame(height: tab == .colors ? 100 : 92)
+                            .frame(maxWidth: 680)
+                            .environment(\.editRowWidth, 680)
+                            .offset(y: revealed ? 0 : 56)
+                    }
+                    .frame(height: Self.ipadBand)
+                }
+                .ignoresSafeArea()
+            } else {
             VStack(spacing: 0) {
                 header
                     .padding(.horizontal, 16)
@@ -175,6 +271,7 @@ struct EditView: View {
                 .offset(y: revealed ? 0 : 56)
             }
             .ignoresSafeArea()
+            }
             }
         }
         .preferredColorScheme(.dark)
@@ -350,7 +447,9 @@ struct EditView: View {
                 model.setAnimated(!animated)
                 UISelectionFeedbackGenerator().selectionChanged()
             }
-        } else {
+        } else if !Self.isPad {
+            // The iPhone header's trailing column needs the placeholder
+            // to keep fit centered; the iPad row packs tight instead.
             Color.clear.frame(width: 40, height: 40)
         }
     }
@@ -419,6 +518,204 @@ struct EditView: View {
             FrameControlsRow(model: model, preview: model.preview)
         case .colors:
             ColorControlsRow(model: model, preview: model.preview)
+        }
+    }
+
+    /// iPad: the bottom strip per tab — Adjust's ruler/pills, Shader's
+    /// presets, Frame's hint, Colors' mode pills + palettes.
+    @ViewBuilder
+    private var ipadBottomStrip: some View {
+        switch tab {
+        case .adjust:
+            adjustBottomStrip
+        case .shader:
+            PresetPillsRow(model: model, preview: model.preview)
+        case .frame:
+            Text("Drag to pan · pinch to zoom · twist to rotate")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.45))
+        case .colors:
+            ColorControlsRow(model: model, preview: model.preview,
+                             showsWells: false)
+        }
+    }
+
+    /// iPad Adjust: the selected carousel item's detail, horizontal.
+    @ViewBuilder
+    private var adjustBottomStrip: some View {
+        let sections = EditControls.adjustSections(model: model)
+        let controls = sections.flatMap(\.controls)
+        let selected = controls.first { $0.id == adjustSelectedID }
+            ?? controls.first {
+                if case .slider = $0.kind { return true }
+                if case .options = $0.kind { return true }
+                return false
+            }
+        if let selected {
+            switch selected.kind {
+            case .slider(let range, let step, let defaultValue, let get, let set, let commit):
+                RulerSlider(
+                    value: Binding(get: get, set: set),
+                    range: range, step: step, defaultValue: defaultValue,
+                    onCommit: commit, onScrubbing: { setScrubbing($0) })
+                    .padding(.horizontal, 24)
+            case .options(let all, let get, let set):
+                OptionPillsRow(all: all, current: get(), set: set)
+            default:
+                EmptyView()
+            }
+        }
+    }
+
+    /// iPad: Photos' single header row — X + undo/redo at left, the tab
+    /// name centered, fit + mode + a same-height Done capsule at right.
+    private var ipadHeader: some View {
+        HStack(spacing: 10) {
+            Group {
+                if isDirty {
+                    Menu {
+                        Section {
+                            Button(role: .destructive) {
+                                cancel()
+                            } label: { Label("Discard Changes", systemImage: "trash") }
+                        } header: {
+                            Text("Your changes haven't been saved.")
+                        }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .chromeGlass(in: Circle())
+                    }
+                } else {
+                    Button { cancel() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .chromeGlass(in: Circle())
+                    }
+                }
+            }
+            .accessibilityLabel("Cancel")
+
+            HStack(spacing: 0) {
+                Button {
+                    undoManager?.undo()
+                    model.reloadEditor()
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .frame(width: 44, height: 40)
+                }
+                .disabled(!canUndo)
+                Button {
+                    undoManager?.redo()
+                    model.reloadEditor()
+                } label: {
+                    Image(systemName: "arrow.uturn.forward")
+                        .frame(width: 44, height: 40)
+                }
+                .disabled(!canRedo)
+            }
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(.white)
+            .chromeGlass(in: Capsule())
+
+            Spacer()
+
+            Text(tab.rawValue.uppercased())
+                .font(.caption.weight(.semibold))
+                .kerning(1.4)
+                .foregroundStyle(.white.opacity(0.85))
+
+            Spacer()
+
+            headerCircle(zoomed ? "arrow.down.right.and.arrow.up.left"
+                                : "arrow.up.left.and.arrow.down.right",
+                         label: zoomed ? "Shrink Preview" : "Fit to Screen") {
+                setZoomed(!zoomed)
+            }
+            modeCircle
+
+            Button { done() } label: {
+                Text("Done")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(isDirty ? .black : .white)
+                    .padding(.horizontal, 18)
+                    .frame(height: 40)
+                    .background {
+                        Capsule().fill(Color.yellow).opacity(isDirty ? 1 : 0)
+                    }
+                    .chromeGlass(in: Capsule())
+                    .opacity(isDirty || onCancel != nil ? 1 : 0.5)
+            }
+            .disabled(!isDirty && onCancel == nil)
+            .accessibilityLabel("Done")
+        }
+    }
+
+    /// iPad: the tab bar turned on its side — a vertical glass rail of
+    /// the same four tabs, centered on the left edge.
+    private var tabRail: some View {
+        VStack {
+            Spacer()
+            VStack(spacing: 4) {
+                ForEach(tabs, id: \.self) { item in
+                    Button {
+                        // NO animation: an animated selection here races
+                        // the column/strip swap's re-render and the
+                        // interrupted crossfade reads as a yellow→old→
+                        // yellow flicker. Instant is also what Photos does.
+                        tab = item
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: item.systemImage)
+                                .font(.system(size: 20))
+                            Text(item.rawValue)
+                                .font(.system(size: 10))
+                        }
+                        .foregroundStyle(tab == item ? Color.yellow : .white.opacity(0.55))
+                        .frame(width: 60, height: 58)
+                        .contentShape(Rectangle())
+                        .animation(nil, value: tab)
+                    }
+                    .buttonStyle(RailButtonStyle())
+                    .accessibilityLabel(Text(item.rawValue))
+                }
+            }
+            .padding(.vertical, 10)
+            .chromeGlass(in: Capsule(), interactive: false)
+            Spacer()
+        }
+    }
+
+    /// Rail cells share one glass capsule, where the default plain-style
+    /// pressed flash reads as the whole rail flickering — presses stay
+    /// visually inert; the yellow selection is the feedback.
+    private struct RailButtonStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+        }
+    }
+
+    /// iPad: the selected tab's controls in a fixed-width vertical panel —
+    /// the same rows the iPhone stacks at the bottom, laid out against the
+    /// panel's width instead of the screen's.
+    private var controlsPanel: some View {
+        VStack {
+            Spacer(minLength: 0)
+            ScrollView(.vertical, showsIndicators: false) {
+                controlsArea
+                    .padding(.vertical, 16)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollClipDisabled()
+            .frame(width: Self.panelWidth)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxHeight: .infinity)
+            .environment(\.editRowWidth, Self.panelWidth)
+            Spacer(minLength: 0)
         }
     }
 

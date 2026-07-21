@@ -47,7 +47,7 @@ enum LivePhotoExporter {
         model.flushPendingWriteback()
         let params = model.preview.params
         let texture = model.preview.texture
-        let screen = UIScreen.main.nativeBounds.size
+        let screen = SaveWallpaperButton.screenWallpaperPixels
         var width = (screen.width / max(1, screen.height) * Self.maxHeight).rounded()
         width -= width.truncatingRemainder(dividingBy: 2)
         let pixels = CGSize(width: width, height: Self.maxHeight)

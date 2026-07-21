@@ -111,7 +111,7 @@ final class AppModel: ObservableObject {
     func open(_ id: UUID, scope: [UUID]? = nil) {
         detailScopeIDs = scope
         selectedID = id
-        if UIDevice.current.userInterfaceIdiom != .pad, path.last != id {
+        if path.last != id {
             path.append(id)
         }
     }

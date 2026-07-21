@@ -18,6 +18,8 @@ struct RulerSlider: View {
     let range: ClosedRange<Double>
     var step: Double?
     var defaultValue: Double?
+    /// .horizontal (iPhone rows) or .vertical (the iPad Adjust column).
+    var axis: Axis = .horizontal
     /// Fired when a drag ends — commit point for expensive work.
     var onCommit: (() -> Void)?
     /// Fired with true on the first drag movement, false on release —
@@ -94,6 +96,8 @@ struct RulerSlider: View {
 
             if let count = discreteCount {
                 dotScale(count: count)
+            } else if axis == .vertical {
+                verticalRuler
             } else {
                 ruler
             }
@@ -181,6 +185,74 @@ struct RulerSlider: View {
             .onTapGesture(count: 2) { snapToDefault() }
         }
         .frame(height: 36)
+    }
+
+    // MARK: - Continuous face, standing up (iPad Adjust column)
+
+    private var verticalRuler: some View {
+        GeometryReader { geo in
+            let height = geo.size.height
+            let tickSpacing: CGFloat = 7
+            let visibleTicks = Int(height / tickSpacing) + 2
+            let totalTicks = max(1, Int((span / minorStep).rounded()))
+            let offset = CGFloat(fraction * Double(totalTicks)) * tickSpacing
+
+            Canvas { context, size in
+                let centerY = size.height / 2
+                for i in 0...visibleTicks {
+                    let rulerIndex = Int((offset / tickSpacing).rounded(.down)) - visibleTicks / 2 + i
+                    guard rulerIndex >= 0, rulerIndex <= totalTicks else { continue }
+                    // Value grows UPWARD: higher index sits higher.
+                    let y = centerY - CGFloat(rulerIndex) * tickSpacing + offset
+                    guard y >= -2, y <= size.height + 2 else { continue }
+                    let isMajor = rulerIndex % 8 == 0
+                    let width: CGFloat = isMajor ? 14 : 8
+                    let x = (size.width - width) / 2
+                    var path = Path()
+                    path.move(to: CGPoint(x: x, y: y))
+                    path.addLine(to: CGPoint(x: x + width, y: y))
+                    context.stroke(path, with: .color(.white.opacity(isMajor ? 0.6 : 0.28)),
+                                   style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                }
+                let needle = Path(roundedRect: CGRect(x: (size.width - 26) / 2,
+                                                      y: centerY - 1.25,
+                                                      width: 26, height: 2.5),
+                                  cornerRadius: 1.25)
+                context.fill(needle, with: .color(.white))
+            }
+            .mask {
+                LinearGradient(stops: [.init(color: .clear, location: 0),
+                                       .init(color: .black, location: 0.12),
+                                       .init(color: .black, location: 0.88),
+                                       .init(color: .clear, location: 1)],
+                               startPoint: .top, endPoint: .bottom)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { g in
+                        if dragStartValue == nil {
+                            dragStartValue = safeValue
+                            onScrubbing?(true)
+                        }
+                        guard height > 0, let base = dragStartValue else { return }
+                        // Dragging DOWN moves the surface down = value up?
+                        // Photos: drag UP increases — translation is
+                        // negative upward, so subtracting flips it right.
+                        let delta = Double(g.translation.height / height) * span * 0.9
+                        set(base + delta)
+                    }
+                    .onEnded { _ in
+                        dragStartValue = nil
+                        dragValue = nil
+                        lastDetent = nil
+                        onScrubbing?(false)
+                        onCommit?()
+                    }
+            )
+            .onTapGesture(count: 2) { snapToDefault() }
+        }
+        .frame(width: 36)
     }
 
     // MARK: - Discrete face (the dot scale)
@@ -325,10 +397,12 @@ struct ControlCircle: View {
                     .font(.system(size: 10))
                     .foregroundStyle(isSelected ? .white : .white.opacity(0.55))
                     .lineLimit(1)
-                // Photos marks touched controls with the app's yellow.
+                // Photos marks touched controls with the app's yellow —
+                // with a breath of space, not glued to the label.
                 Circle()
                     .fill(isModified ? Color.yellow : .clear)
                     .frame(width: 4, height: 4)
+                    .padding(.top, 2)
             }
             .frame(width: 62)
         }

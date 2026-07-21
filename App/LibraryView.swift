@@ -5,13 +5,12 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WallshaderModel
 
-/// The library — grid on iPhone (root screen), sidebar list on iPad.
+/// The library — the Photos-style grid, root screen on EVERY device (the
+/// iPad's old sidebar split view retired: one structure, iPhone-proven).
 /// Thumbnails show the CURRENT DEVICE's variant (auto-derived if untouched):
 /// "everything you made on the Mac is already here, iPhone-shaped" (C4).
 struct LibraryView: View {
-    enum Style { case grid, sidebar }
-    let style: Style
-    /// Photos-style zoom into the detail screen (grid only).
+    /// Photos-style zoom into the detail screen.
     var zoomNamespace: Namespace.ID? = nil
 
     @EnvironmentObject private var app: AppModel
@@ -87,33 +86,8 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        Group {
-            if style == .sidebar {
-                sidebarList
-            } else {
-                grid
-            }
-        }
-        .navigationTitle("Wallshader")
-        .toolbar {
-            if style == .sidebar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        newWallpaper()
-                    } label: {
-                        Label("New Wallpaper", systemImage: "plus")
-                    }
-                    .accessibilityLabel("New Wallpaper")
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink {
-                        SettingsView()
-                    } label: {
-                        Label("Settings", systemImage: "gearshape")
-                    }
-                }
-            }
-        }
+        grid
+            .navigationTitle("Wallshader")
         .sheet(isPresented: $showingShare) { ShareSheet(items: shareURLs) }
         .sheet(isPresented: $showingNewSheet, onDismiss: runPendingNewAction) {
             NewWallpaperSheet(
@@ -156,11 +130,17 @@ struct LibraryView: View {
 
     /// Rounded tiles with one gutter width everywhere: between columns,
     /// between rows, AND at the screen edges.
-    private static let gridGap: CGFloat = 6
-    private static let tileCorner: CGFloat = 10
+    /// iPad breathes: larger tiles, wider gutters (one structure, two
+    /// densities).
+    private static let gridGap: CGFloat =
+        UIDevice.current.userInterfaceIdiom == .pad ? 16 : 6
+    private static let tileCorner: CGFloat =
+        UIDevice.current.userInterfaceIdiom == .pad ? 14 : 10
 
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 118, maximum: 190), spacing: Self.gridGap)]
+        UIDevice.current.userInterfaceIdiom == .pad
+            ? [GridItem(.adaptive(minimum: 240, maximum: 340), spacing: Self.gridGap)]
+            : [GridItem(.adaptive(minimum: 118, maximum: 190), spacing: Self.gridGap)]
     }
 
     private var grid: some View {
@@ -229,7 +209,10 @@ struct LibraryView: View {
                         .padding(.horizontal, 48)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.top, 180)
+                // TRUE screen-center: the fixed top padding sat high (and
+                // clearly off-center on the landscape iPad) — size the
+                // empty state to the scroll container and center within.
+                .containerRelativeFrame(.vertical, alignment: .center)
             }
             LazyVGrid(columns: columns, spacing: Self.gridGap) {
                 ForEach(docs) { doc in
@@ -255,6 +238,8 @@ struct LibraryView: View {
             // behind the bar.
             .padding(.bottom, 128)
         }
+        // An empty shelf is a STILL page: nothing to scroll, no bounce.
+        .scrollDisabled(shelf == .favorites && docs.isEmpty)
         .softTopEdge()
         .softBottomEdge()
         .ignoresSafeArea(edges: .bottom)
@@ -546,24 +531,6 @@ struct LibraryView: View {
         }.value
     }
 
-    private var sidebarList: some View {
-        List(selection: Binding(get: { app.selectedID },
-                                set: { if let id = $0 { app.open(id) } })) {
-            ForEach(library.documents) { doc in
-                HStack(spacing: 10) {
-                    thumbnailImage(doc)
-                        .frame(width: 64, height: 44)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    Text(doc.name).lineLimit(1)
-                }
-                .tag(doc.id)
-                .contextMenu { contextMenu(doc) }
-            }
-            .onMove(perform: move)
-        }
-        .navigationTitle("Library")
-    }
-
     @ViewBuilder
     private func thumbnailImage(_ doc: WallpaperDocument) -> some View {
         if let cg = thumbnails.thumbnail(for: doc, app: app) {
@@ -731,7 +698,8 @@ final class DeviceThumbnailStore: ObservableObject {
         // Stable stamp: JSONEncoder's dictionary order is nondeterministic,
         // so hashing an encode would miss the cache on every call.
         let device = AppModel.currentDevice
-        return "\(device.rawValue)-\(doc.shaderId ?? "")-\(doc.modifiedAt.timeIntervalSince1970)-\(doc.isCustomized(device))-\(doc.sourceImageCacheKey ?? "")"
+        // v2: iPad went landscape — the token busts portrait-era caches.
+        return "\(device.rawValue)v2-\(doc.shaderId ?? "")-\(doc.modifiedAt.timeIntervalSince1970)-\(doc.isCustomized(device))-\(doc.sourceImageCacheKey ?? "")"
     }
 
     /// Returns the cached render — or, while a fresh one is in flight, the
