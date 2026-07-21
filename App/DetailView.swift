@@ -361,11 +361,16 @@ struct DetailView: View {
             Spacer()
 
             VStack(spacing: 1) {
+                // One line, always: the pill grows to fit and then the
+                // name truncates — it never wraps under itself.
                 Text(currentDocument?.name ?? "")
                     .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Text(subtitle)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 7)
