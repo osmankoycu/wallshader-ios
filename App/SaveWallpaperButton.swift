@@ -51,7 +51,7 @@ struct SaveWallpaperButton: View {
             } else {
                 Menu {
                     ForEach(StudioExportPreset.presets(for: model.selectedDevice)) { preset in
-                        Button("\(preset.name) — \(preset.width)×\(preset.height)") {
+                        Button("\(preset.name) (\(preset.width)×\(preset.height))") {
                             pendingPreset = preset
                         }
                     }

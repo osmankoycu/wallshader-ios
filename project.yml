@@ -26,7 +26,7 @@ settings:
     # Known gotcha: XcodeGen hardcodes Info.plist versions unless these are
     # wired through info.properties below.
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: 2
+    CURRENT_PROJECT_VERSION: 3
     DEVELOPMENT_TEAM: GK6GVT5VK7
     TARGETED_DEVICE_FAMILY: "1,2"
   configs:
@@ -85,6 +85,12 @@ targets:
       # directly from the sibling repo (source of truth for shared assets).
       - path: ../wallshader/Assets/WallshaderAppIcon.icon
       - path: ../wallshader/Assets/test-image.jpg
+        buildPhase: resources
+      # Paywall hero: the icon's flat 1024px source art (copied from the
+      # Mac repo's .icon package; xcodegen can't reference INTO one) as a
+      # plain resource. The compiled asset ships only 60/76pt PNGs, too
+      # small to draw the icon at hero size.
+      - path: App/PaywallIcon.png
         buildPhase: resources
       - path: App/PrivacyInfo.xcprivacy
         buildPhase: resources

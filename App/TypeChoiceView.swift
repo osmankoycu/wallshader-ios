@@ -13,7 +13,7 @@ struct TypeChoiceView: View {
                 .foregroundStyle(.white)
             HStack(spacing: 16) {
                 card(title: "Shader",
-                     subtitle: "A generated look — gradients, noise, metaballs…",
+                     subtitle: "A generated look: gradients, noise, metaballs…",
                      systemImage: "circle.bottomrighthalf.pattern.checkered") {
                     choose(.procedural)
                 }

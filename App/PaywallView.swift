@@ -14,20 +14,33 @@ struct PaywallView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 22) {
-                Image(systemName: "sparkles.rectangle.stack")
-                    .font(.system(size: 46))
-                    .foregroundStyle(.tint)
-                    .padding(.top, 24)
+                // The Mac paywall's hero: the real app icon. The compiled
+                // asset only ships 60/76pt PNGs, so the icon's flat 1024px
+                // source art rides along as a plain bundle resource.
+                if let icon = UIImage(named: "PaywallIcon") {
+                    Image(uiImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 104, height: 104)
+                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        .shadow(color: .black.opacity(0.5), radius: 18, y: 10)
+                        .padding(.top, 24)
+                } else {
+                    Image(systemName: "sparkles.rectangle.stack")
+                        .font(.system(size: 46))
+                        .foregroundStyle(.tint)
+                        .padding(.top, 24)
+                }
                 Text("Wallshader Pro")
                     .font(.largeTitle.weight(.bold))
-                Text("Unlimited wallpapers and iCloud sync. One purchase, yours forever — on Mac, iPhone, and iPad.")
+                Text("Unlimited wallpapers and iCloud sync. One purchase, yours forever on Mac, iPhone, and iPad.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
 
                 VStack(alignment: .leading, spacing: 12) {
-                    feature("infinity", "Unlimited wallpapers — the free library holds \(StoreService.freeDocumentLimit)")
+                    feature("infinity", "Unlimited wallpapers. The free library holds \(StoreService.freeDocumentLimit)")
                     feature("icloud", "iCloud sync keeps your library on every device")
                     feature("pencil", "Every editing feature stays free, always")
                     feature("laptopcomputer.and.iphone", "One purchase unlocks every platform")
@@ -47,7 +60,7 @@ struct PaywallView: View {
                             if purchasing {
                                 ProgressView()
                             } else {
-                                Text("Unlock Pro — \(store.product?.displayPrice ?? "$8.99")")
+                                Text("Unlock Pro for \(store.product?.displayPrice ?? "$8.99")")
                             }
                         }
                         .frame(maxWidth: .infinity)

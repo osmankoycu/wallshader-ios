@@ -47,7 +47,7 @@ struct SettingsView: View {
             } footer: {
                 Text(store.isPro
                      ? "Sync your wallpaper library across your devices through your private iCloud. Nothing leaves your Apple ID."
-                     : "Sync your wallpaper library across your devices through your private iCloud — included with Wallshader Pro.")
+                     : "Sync your wallpaper library across your devices through your private iCloud. Included with Wallshader Pro.")
             }
 
             Section {
@@ -100,11 +100,14 @@ struct AboutView: View {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Wallshader").font(.headline)
-                    Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"))")
+                    Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("GPU shader wallpapers for your devices — live on the Mac desktop, Photos-ready on iPhone and iPad.")
+                    Text("GPU shader wallpapers for your devices. Live on the Mac desktop, Photos-ready on iPhone and iPad.")
                         .font(.callout)
+                    Text("© 2026 Image Inc.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 4)
             }
