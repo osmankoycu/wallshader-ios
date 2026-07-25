@@ -271,7 +271,7 @@ enum LivePhotoExporter {
             var resumed = false
         }
         let state = MuxState()
-        let queue = DispatchQueue(label: "com.innovationBox.wallshader.livephoto-mux")
+        let queue = DispatchQueue(label: "com.imageinc.wallshader.livephoto-mux")
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             input.requestMediaDataWhenReady(on: queue) {
                 while input.isReadyForMoreMediaData, state.frameIndex < frames, !state.resumed {

@@ -53,7 +53,7 @@ final class ModelIntegrationTests: XCTestCase {
 
     func testFreeLimitPolicyMatchesMac() {
         XCTAssertEqual(StoreService.freeDocumentLimit, 7)
-        XCTAssertEqual(StoreService.proProductID, "com.innovationBox.wallshader.pro")
+        XCTAssertEqual(StoreService.proProductID, "com.imageinc.wallshader.pro")
     }
 
     @MainActor

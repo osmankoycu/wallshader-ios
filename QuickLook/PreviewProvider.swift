@@ -33,7 +33,7 @@ final class PreviewViewController: UIViewController, QLPreviewingController {
     }
 
     /// Field diagnosis into the extension's own container tmp — pull with
-    /// devicectl (domain-identifier com.innovationBox.wallshader.quicklook).
+    /// devicectl (domain-identifier com.imageinc.wallshader.quicklook).
     private static func diag(_ line: String) {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ql-diag.txt")

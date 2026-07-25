@@ -17,7 +17,7 @@
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.innovationBox.wallshader.wallpaper</string>
+				<string>com.imageinc.wallshader.wallpaper</string>
 			</array>
 		</dict>
 	</array>
@@ -67,7 +67,7 @@
 			<key>UTTypeDescription</key>
 			<string>Wallshader Wallpaper</string>
 			<key>UTTypeIdentifier</key>
-			<string>com.innovationBox.wallshader.wallpaper</string>
+			<string>com.imageinc.wallshader.wallpaper</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>

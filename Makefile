@@ -5,7 +5,7 @@ DERIVED := build/DerivedData
 # First available iPhone simulator — never hardcode a model name.
 SIM_ID = $(shell xcrun simctl list devices available | grep -E "iPhone" | head -1 | grep -oE "[0-9A-F-]{36}")
 IPAD_ID = $(shell xcrun simctl list devices available | grep -E "iPad" | head -1 | grep -oE "[0-9A-F-]{36}")
-BUNDLE := com.innovationBox.wallshader
+BUNDLE := com.imageinc.wallshader
 APP := $(DERIVED)/Build/Products/Debug-iphonesimulator/Wallshader.app
 
 .PHONY: project build test run screens clean

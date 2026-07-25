@@ -1021,7 +1021,7 @@ private struct NewWallpaperSheet: View {
 
     /// The app's own exported document type (matches Info.plist).
     private static let wallshaderType =
-        UTType(exportedAs: "com.innovationBox.wallshader.wallpaper")
+        UTType(exportedAs: "com.imageinc.wallshader.wallpaper")
 
     private func sourceRow(_ title: String, systemImage: String) -> some View {
         HStack(spacing: 12) {

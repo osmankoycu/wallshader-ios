@@ -26,7 +26,7 @@
 		<dict>
 			<key>QLSupportedContentTypes</key>
 			<array>
-				<string>com.innovationBox.wallshader.wallpaper</string>
+				<string>com.imageinc.wallshader.wallpaper</string>
 			</array>
 			<key>QLSupportsSearchableItems</key>
 			<false/>
