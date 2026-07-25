@@ -276,6 +276,11 @@ struct LibraryView: View {
         }
     }
 
+    /// NOT the Photos app's private select glyph: that name is in no
+    /// public symbol set (16.x–26.x), and SwiftUI draws unknown names as
+    /// an EMPTY image — the Select circle rendered blank.
+    private static let selectSymbol = "checkmark.circle"
+
     /// Photos' Library header, hand-built and PINNED: the big title +
     /// count at left, the two circle buttons on the same line at right,
     /// the grid scrolling underneath a top scrim. (The system nav bar
@@ -309,7 +314,7 @@ struct LibraryView: View {
                     selected.removeAll()
                 }
             } label: {
-                Image(systemName: selecting ? "xmark" : "circle.grid.2x2.topleft.checkmark.filled")
+                Image(systemName: selecting ? "xmark" : Self.selectSymbol)
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
