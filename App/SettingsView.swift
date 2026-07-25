@@ -8,23 +8,46 @@ struct SettingsView: View {
     @AppStorage("liveFrameRateCap") private var frameRateCap = 60
     @ObservedObject private var store = StoreService.shared
     @State private var restoreMessage: String?
+    @State private var showingPaywall = false
 
     @EnvironmentObject private var app: AppModel
 
     var body: some View {
         Form {
             Section {
-                Toggle("Sync with iCloud", isOn: Binding(
-                    get: { app.syncEnabled },
-                    set: { app.setSyncEnabled($0) }
-                ))
-                if app.syncEnabled {
-                    LabeledContent("Status", value: app.syncStatusLine)
+                if store.isPro {
+                    Toggle("Sync with iCloud", isOn: Binding(
+                        get: { app.syncEnabled },
+                        set: { app.setSyncEnabled($0) }
+                    ))
+                    if app.syncEnabled {
+                        LabeledContent("Status", value: app.syncStatusLine)
+                    }
+                } else {
+                    // Sync is part of Pro: a locked row, straight to the
+                    // paywall — no dead toggle.
+                    Button {
+                        showingPaywall = true
+                    } label: {
+                        HStack {
+                            Text("Sync with iCloud")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text("Pro")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(.yellow))
+                        }
+                    }
                 }
             } header: {
                 Text("iCloud")
             } footer: {
-                Text("Sync your wallpaper library across your devices through your private iCloud. Nothing leaves your Apple ID.")
+                Text(store.isPro
+                     ? "Sync your wallpaper library across your devices through your private iCloud. Nothing leaves your Apple ID."
+                     : "Sync your wallpaper library across your devices through your private iCloud — included with Wallshader Pro.")
             }
 
             Section {
@@ -65,6 +88,7 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .sheet(isPresented: $showingPaywall) { PaywallView() }
     }
 }
 

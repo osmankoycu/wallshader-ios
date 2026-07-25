@@ -20,7 +20,7 @@ struct PaywallView: View {
                     .padding(.top, 24)
                 Text("Wallshader Pro")
                     .font(.largeTitle.weight(.bold))
-                Text("Unlimited wallpapers. One purchase, yours forever — on Mac, iPhone, and iPad.")
+                Text("Unlimited wallpapers and iCloud sync. One purchase, yours forever — on Mac, iPhone, and iPad.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -28,6 +28,7 @@ struct PaywallView: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     feature("infinity", "Unlimited wallpapers — the free library holds \(StoreService.freeDocumentLimit)")
+                    feature("icloud", "iCloud sync keeps your library on every device")
                     feature("pencil", "Every editing feature stays free, always")
                     feature("laptopcomputer.and.iphone", "One purchase unlocks every platform")
                 }

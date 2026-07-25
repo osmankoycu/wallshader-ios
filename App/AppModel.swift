@@ -24,6 +24,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var syncStatus: LibrarySyncEngine.Status = .off
     private var syncEngine: LibrarySyncEngine?
     private var syncStatusMirror: AnyCancellable?
+    private var proMirror: AnyCancellable?
     static let syncEnabledKey = "syncWithICloud"
     @Published var path: [UUID] = []
     /// Detail pager scope: the id list frozen when a wallpaper is opened
@@ -63,6 +64,17 @@ final class AppModel: ObservableObject {
         // asks for them — the library appears fully populated at once.
         DeviceThumbnailStore.shared.preload(docs: library.documents)
         startSyncIfEnabled()
+        // Sync is a Pro feature. Entitlements load async at launch, so a
+        // Pro user's engine starts when isPro lands; a verified revocation
+        // stops it. Deferred write — isPro can flip inside a view update.
+        proMirror = store.$isPro
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] pro in
+                Task { @MainActor [weak self] in
+                    if pro { self?.startSyncIfEnabled() } else { self?.stopSyncEngine() }
+                }
+            }
     }
 
     // MARK: - iCloud sync (Phase D)
@@ -72,7 +84,7 @@ final class AppModel: ObservableObject {
     }
 
     func startSyncIfEnabled() {
-        guard syncEnabled else {
+        guard syncEnabled, store.isPro else {
             syncStatus = .off
             return
         }
@@ -93,11 +105,15 @@ final class AppModel: ObservableObject {
         if enabled {
             startSyncIfEnabled()
         } else {
-            syncEngine?.stop()
-            syncEngine = nil
-            syncStatusMirror = nil
-            syncStatus = .off
+            stopSyncEngine()
         }
+    }
+
+    private func stopSyncEngine() {
+        syncEngine?.stop()
+        syncEngine = nil
+        syncStatusMirror = nil
+        syncStatus = .off
     }
 
     var syncStatusLine: String {
