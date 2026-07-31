@@ -180,6 +180,11 @@ targets:
     platform: iOS
     sources:
       - path: Tests/WallshaderIOSTests
+      # Shared-package tests, owned by the Mac repo alongside the package
+      # they cover — same reach as the WallshaderModel dependency above.
+      # The replication engine ships on both platforms; editing it from
+      # this repo must fail this repo's tests too.
+      - path: ../wallshader/Tests/Shared
     dependencies:
       - package: ShaderCore
       - package: WallshaderModel
