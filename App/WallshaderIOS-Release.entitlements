@@ -13,7 +13,10 @@
 	<!-- Silent CloudKit pushes, so a change made on the Mac lands here
 	     while the app is open. Content-available only: nothing is ever
 	     displayed, so this needs no user permission and shows no prompt. -->
+	<!-- production for anything signed for distribution; a locally signed
+	     test build must say development or APNs refuses the token. Set per
+	     invocation, so there is no value here to forget to change back. -->
 	<key>aps-environment</key>
-	<string>production</string>
+	<string>$(WALLSHADER_APS_ENVIRONMENT)</string>
 </dict>
 </plist>
