@@ -206,11 +206,12 @@ struct LibraryView: View {
         .frame(height: 62)
     }
 
-    /// Nothing on this shelf. Favorites is a *state* the user can leave by
-    /// hearting something, so it only explains itself; an empty All shelf
-    /// means there are no wallpapers at all, and that one gets the way out
-    /// — the + is a 60pt circle in the corner, which is not much of an
-    /// answer when the rest of the screen is blank.
+    /// Nothing on this shelf.
+    ///
+    /// Favorites explains itself because its action is a hidden gesture —
+    /// nothing on screen says "tap and hold". An empty All shelf needs no
+    /// such help: the + sits right there in the bottom bar, so the state
+    /// just names itself and gets out of the way.
     @ViewBuilder
     private func emptyShelf(_ shelf: LibraryTab) -> some View {
         let favorites = shelf == .favorites
@@ -221,33 +222,29 @@ struct LibraryView: View {
             Text(favorites ? "No Favorites" : "No Wallshaders")
                 .font(.headline)
                 .foregroundStyle(.white)
-            Text(favorites
-                 ? "Tap and hold a wallpaper to add to favorites."
-                 : "Create one to start designing a wallpaper.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 48)
-            if !favorites {
-                // The same chooser the + opens (sheet on iPhone, popover
-                // off the + on iPad) — one flow, two doors.
-                Button {
-                    showingNewSheet = true
-                } label: {
-                    Label("New Wallshader", systemImage: "plus")
-                        .fontWeight(.medium)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .padding(.top, 4)
+            if favorites {
+                Text("Tap and hold a wallpaper to add to favorites.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 48)
             }
         }
         .frame(maxWidth: .infinity)
-        // TRUE screen-center: the fixed top padding sat high (and clearly
-        // off-center on the landscape iPad) — size the empty state to the
-        // scroll container and center within.
+        // Centred on what the user can SEE, not on the scroll container.
+        // The container deliberately runs underneath the floating bottom
+        // bar (ignoresSafeArea below) so the grid scrolls edge to edge —
+        // which makes it taller than the visible area, and anything
+        // centred in it parks low. Padding the block by the full occluded
+        // height puts the content exactly half of it higher, which is the
+        // middle of what is actually on screen.
+        .padding(.bottom, Self.bottomChromeHeight)
         .containerRelativeFrame(.vertical, alignment: .center)
     }
+
+    /// The bottom bar (62) plus the home indicator it floats above (34).
+    /// Adjust here if the bar's own height changes.
+    private static let bottomChromeHeight: CGFloat = 62 + 34
 
     private func gridContent(shelf: LibraryTab) -> some View {
         let docs = documents(for: shelf)
