@@ -26,7 +26,7 @@ settings:
     # Known gotcha: XcodeGen hardcodes Info.plist versions unless these are
     # wired through info.properties below.
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: 3
+    CURRENT_PROJECT_VERSION: 4
     DEVELOPMENT_TEAM: GK6GVT5VK7
     TARGETED_DEVICE_FAMILY: "1,2"
   configs:
