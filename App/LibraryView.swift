@@ -206,29 +206,55 @@ struct LibraryView: View {
         .frame(height: 62)
     }
 
+    /// Nothing on this shelf. Favorites is a *state* the user can leave by
+    /// hearting something, so it only explains itself; an empty All shelf
+    /// means there are no wallpapers at all, and that one gets the way out
+    /// — the + is a 60pt circle in the corner, which is not much of an
+    /// answer when the rest of the screen is blank.
+    @ViewBuilder
+    private func emptyShelf(_ shelf: LibraryTab) -> some View {
+        let favorites = shelf == .favorites
+        VStack(spacing: 12) {
+            Image(systemName: favorites ? "heart" : "photo.on.rectangle.angled")
+                .font(.system(size: 40))
+                .foregroundStyle(.white.opacity(0.35))
+            Text(favorites ? "No Favorites" : "No Wallshaders")
+                .font(.headline)
+                .foregroundStyle(.white)
+            Text(favorites
+                 ? "Tap and hold a wallpaper to add to favorites."
+                 : "Create one to start designing a wallpaper.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 48)
+            if !favorites {
+                // The same chooser the + opens (sheet on iPhone, popover
+                // off the + on iPad) — one flow, two doors.
+                Button {
+                    showingNewSheet = true
+                } label: {
+                    Label("New Wallshader", systemImage: "plus")
+                        .fontWeight(.medium)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding(.top, 4)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        // TRUE screen-center: the fixed top padding sat high (and clearly
+        // off-center on the landscape iPad) — size the empty state to the
+        // scroll container and center within.
+        .containerRelativeFrame(.vertical, alignment: .center)
+    }
+
     private func gridContent(shelf: LibraryTab) -> some View {
         let docs = documents(for: shelf)
         return ScrollViewReader { proxy in
         ScrollView {
-            if shelf == .favorites && docs.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "heart")
-                        .font(.system(size: 40))
-                        .foregroundStyle(.white.opacity(0.35))
-                    Text("No Favorites")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                    Text("Tap and hold a wallpaper to add to favorites.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 48)
-                }
-                .frame(maxWidth: .infinity)
-                // TRUE screen-center: the fixed top padding sat high (and
-                // clearly off-center on the landscape iPad) — size the
-                // empty state to the scroll container and center within.
-                .containerRelativeFrame(.vertical, alignment: .center)
+            if docs.isEmpty {
+                emptyShelf(shelf)
             }
             LazyVGrid(columns: columns, spacing: Self.gridGap) {
                 ForEach(docs) { doc in
@@ -255,7 +281,7 @@ struct LibraryView: View {
             .padding(.bottom, 128)
         }
         // An empty shelf is a STILL page: nothing to scroll, no bounce.
-        .scrollDisabled(shelf == .favorites && docs.isEmpty)
+        .scrollDisabled(docs.isEmpty)
         .softTopEdge()
         .softBottomEdge()
         .ignoresSafeArea(edges: .bottom)
