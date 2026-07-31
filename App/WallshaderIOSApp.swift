@@ -1,9 +1,37 @@
+import CloudKit
 import SwiftUI
 import UnsplashKit
 import WallshaderModel
 
+/// Silent CloudKit pushes have no SwiftUI scene hook — delivery goes
+/// through UIApplicationDelegate or nowhere. Registration itself happens
+/// when sync starts (AppModel), so a build that cannot reach CloudKit
+/// never asks the system for a token.
+final class PushDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completion:
+                        @escaping (UIBackgroundFetchResult) -> Void) {
+        guard CKNotification(fromRemoteNotificationDictionary: userInfo) != nil else {
+            completion(.noData)
+            return
+        }
+        Task { @MainActor in
+            await AppModel.shared.handleRemoteNotification()
+            completion(.newData)
+        }
+    }
+
+    func application(_ application: UIApplication,
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        // Not fatal: the launch and foreground syncs still run, they just
+        // aren't immediate.
+    }
+}
+
 @main
 struct WallshaderIOSApp: App {
+    @UIApplicationDelegateAdaptor(PushDelegate.self) private var pushDelegate
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var app = AppModel.shared
 

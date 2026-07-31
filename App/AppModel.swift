@@ -1,3 +1,4 @@
+import CloudKit
 import Combine
 import ShaderCore
 import SwiftUI
@@ -24,6 +25,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var syncStatus: LibrarySyncEngine.Status = .off
     private var syncEngine: LibrarySyncEngine?
     private var syncStatusMirror: AnyCancellable?
+    private var accountObserver: NSObjectProtocol?
     private var proMirror: AnyCancellable?
     static let syncEnabledKey = "syncWithICloud"
     @Published var path: [UUID] = []
@@ -92,12 +94,43 @@ final class AppModel: ObservableObject {
             syncEngine?.scheduleSync()
             return
         }
-        let engine = LibrarySyncEngine(library: library, transport: CloudKitTransport())
+        let engine = LibrarySyncEngine(library: library, transport: Self.makeTransport())
         syncEngine = engine
         syncStatusMirror = engine.$status.sink { [weak self] status in
             self?.syncStatus = status
         }
         engine.start()
+        // The zone subscription pushes, so a change made on the Mac lands
+        // here while the app is open instead of waiting for the next
+        // launch — which was the only thing that used to pull on iOS.
+        UIApplication.shared.registerForRemoteNotifications()
+        observeAccountChanges()
+    }
+
+    /// Sync state is per-container; the sandbox keeps it beside the library.
+    private static func makeTransport() -> CloudKitTransport {
+        CloudKitTransport(storage: WallpaperLibrary.libraryDirectory
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sync", isDirectory: true))
+    }
+
+    /// A silent CloudKit push says the zone moved. Awaited, so the system
+    /// gets an honest answer about when the background work finished —
+    /// and straight to syncOnce, past the automatic-sync floor, because
+    /// that floor guards against loops of our own making and this is a
+    /// peer's change.
+    func handleRemoteNotification() async {
+        await syncEngine?.syncOnce()
+    }
+
+    /// A token and a mirror describe ONE account's cloud; switching users
+    /// must not merge two libraries into each other.
+    private func observeAccountChanges() {
+        guard accountObserver == nil else { return }
+        accountObserver = NotificationCenter.default.addObserver(
+            forName: .CKAccountChanged, object: nil, queue: .main) { _ in
+                Task { @MainActor [weak self] in self?.syncEngine?.accountChanged() }
+            }
     }
 
     func setSyncEnabled(_ enabled: Bool) {
