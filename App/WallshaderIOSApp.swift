@@ -62,6 +62,9 @@ struct RootView: View {
                     DetailView(documentID: id, zoomNamespace: zoomNamespace)
                 }
         }
+        .task { ReviewPrompt.shared.noteLaunch() }
+        // Never over the first-run intro, which owns the whole screen.
+        .reviewPromptWhenDue(suppressed: app.showingOnboarding)
         .fullScreenCover(isPresented: $app.showingOnboarding) { OnboardingView() }
         .sheet(isPresented: $app.showingGuideProbe) { GuideSheet() }
         .alert("Import Failed", isPresented: Binding(
