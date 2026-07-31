@@ -731,7 +731,11 @@ struct EditView: View {
         HStack(spacing: 0) {
             ForEach(tabs, id: \.self) { item in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { tab = item }
+                    // NO animation, for the reason the rail above gives:
+                    // the 0.15s crossfade raced the controls re-rendering
+                    // underneath and the interrupted fade read as
+                    // yellow→old→yellow — a flick before the tab took.
+                    tab = item
                 } label: {
                     VStack(spacing: 3) {
                         Image(systemName: item.systemImage)
@@ -749,8 +753,14 @@ struct EditView: View {
                     // never did.
                     .frame(width: 56, height: 44)
                     .contentShape(Rectangle())
+                    // Nothing about the selection fades, even if an
+                    // enclosing animation is in flight.
+                    .animation(nil, value: tab)
                 }
-                .buttonStyle(.plain)
+                // These cells share ONE glass capsule, so .plain's pressed
+                // dimming flashed the whole bar. The selection colour is
+                // the feedback; the press itself stays inert.
+                .buttonStyle(RailButtonStyle())
                 .accessibilityLabel(Text(item.rawValue))
             }
         }
