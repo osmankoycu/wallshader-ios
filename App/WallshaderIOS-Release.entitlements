@@ -10,5 +10,10 @@
 	<array>
 		<string>CloudKit</string>
 	</array>
+	<!-- Silent CloudKit pushes, so a change made on the Mac lands here
+	     while the app is open. Content-available only: nothing is ever
+	     displayed, so this needs no user permission and shows no prompt. -->
+	<key>aps-environment</key>
+	<string>production</string>
 </dict>
 </plist>

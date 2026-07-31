@@ -135,6 +135,11 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Wallshader
         ITSAppUsesNonExemptEncryption: false
+        # Silent CloudKit pushes (the zone subscription) replace polling —
+        # the server tells us the library moved. Delivery to a backgrounded
+        # app needs this mode; nothing is ever shown to the user.
+        UIBackgroundModes:
+          - remote-notification
         NSPhotoLibraryAddUsageDescription: "Wallshader saves your finished wallpapers to your photo library so you can set them from Settings."
         UILaunchScreen: {}
         # iPhone is PORTRAIT-ONLY: the whole phone layout (grid, pager,
