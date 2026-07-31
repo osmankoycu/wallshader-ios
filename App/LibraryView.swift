@@ -38,6 +38,9 @@ struct LibraryView: View {
         let model: EditorModel
     }
     @State private var showingNewSheet = false
+    /// A full-resolution photo is being decoded and re-encoded; the + wears
+    /// a spinner until it lands.
+    @State private var importingPhoto = false
     @State private var pendingNewAction: PendingNewAction?
     @State private var editSession: EditSession?
     /// The freshly created document stays OUT of the grid while its edit
@@ -182,13 +185,24 @@ struct LibraryView: View {
                 Button {
                     showingNewSheet = true
                 } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 60, height: 60)
-                        .chromeGlass(in: Circle(), tint: .accentColor)
+                    Group {
+                        if importingPhoto {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "plus")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .frame(width: 60, height: 60)
+                    .chromeGlass(in: Circle(), tint: .accentColor)
                 }
-                .accessibilityLabel("New Wallpaper")
+                // Tapping again mid-import would open the chooser over a
+                // wallpaper that is about to present its own editor.
+                .disabled(importingPhoto)
+                .accessibilityLabel(importingPhoto ? "Preparing photo" : "New Wallpaper")
                 // iPad: the chooser hangs off the + itself instead of an
                 // iPhone bottom sheet.
                 .popover(isPresented: Self.isPad ? $showingNewSheet : .constant(false)) {
@@ -712,12 +726,19 @@ struct LibraryView: View {
             hiddenNewDocID = doc.id
             registerCreationUndo(doc.id)
             let model = EditorModel(app: app, documentID: doc.id)
+            // Decoding and re-encoding a full-resolution photograph takes
+            // seconds, and until now they were silent ones — the sheet had
+            // closed, nothing had opened, and the app looked stuck. The +
+            // is where the user just acted and where their eye already is.
+            importingPhoto = true
             model.importImage(url: url) { [self] in
+                importingPhoto = false
                 editSession = EditSession(id: doc.id, model: model)
             } onFailure: { [self] error in
                 // No ghost blanks: the document existed only FOR this
                 // photo — roll it back and say what happened, or it sits
                 // invisible in the library burning a free-tier slot.
+                importingPhoto = false
                 library.delete(doc.id)
                 hiddenNewDocID = nil
                 app.importError = "Couldn't add this photo: \(error.localizedDescription)"

@@ -740,7 +740,15 @@ struct EditView: View {
                             .font(.system(size: 10))
                     }
                     .foregroundStyle(tab == item ? Color.yellow : .white.opacity(0.55))
-                    .frame(width: 56)
+                    // Height AND a hit shape. A .plain button is tappable
+                    // only where it actually drew pixels, so without these
+                    // the target was the glyph strokes and the letterforms
+                    // — you had to land on the "S" of Shader, which reads
+                    // as the tab ignoring you. 44pt is Apple's minimum.
+                    // The iPad rail above already does this; the phone
+                    // never did.
+                    .frame(width: 56, height: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(item.rawValue))
