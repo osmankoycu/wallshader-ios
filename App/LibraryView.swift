@@ -771,7 +771,21 @@ final class DeviceThumbnailStore: ObservableObject {
         // so hashing an encode would miss the cache on every call.
         let device = AppModel.currentDevice
         // v2: iPad went landscape — the token busts portrait-era caches.
-        return "\(device.rawValue)v2-\(doc.shaderId ?? "")-\(doc.modifiedAt.timeIntervalSince1970)-\(doc.isCustomized(device))-\(doc.sourceImageCacheKey ?? "")"
+        //
+        // The photo's SIZE, not just its path. A wallpaper synced from
+        // another device arrives as a recipe first and its photograph a
+        // moment later, so a tile rendered in between has no texture to
+        // sample and comes out blank — and the path alone never changes,
+        // so that blank render was cached under the same stamp and stayed
+        // for good. Size moves from 0 to real when the file lands, which
+        // is exactly when the tile has to be drawn again.
+        var photoBytes = 0
+        if let relative = doc.sourceImage {
+            let url = WallpaperLibrary.folder(for: doc.id).appendingPathComponent(relative)
+            photoBytes = (try? FileManager.default.attributesOfItem(atPath: url.path))
+                .flatMap { ($0[.size] as? NSNumber)?.intValue } ?? 0
+        }
+        return "\(device.rawValue)v2-\(doc.shaderId ?? "")-\(doc.modifiedAt.timeIntervalSince1970)-\(doc.isCustomized(device))-\(doc.sourceImageCacheKey ?? "")-\(photoBytes)"
     }
 
     /// Returns the cached render — or, while a fresh one is in flight, the
